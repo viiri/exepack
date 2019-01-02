@@ -1,0 +1,6 @@
+[package]
+name = "exepack"
+version = "0.1.0"
+authors = ["David Fifield <david@bamsoftware.com>"]
+
+[dependencies]
