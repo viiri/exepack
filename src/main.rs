@@ -80,6 +80,15 @@ fn decompress<F, P>(mut input: F, _output_filename: P) -> Result<(), Box<Error>>
         return Err(From::from(format!("bad MZ signature 0x{:04x} (expected {:04x}", header.signature, MZ_SIGNATURE)));
     }
     println!("{:?}", header);
+
+    let compdata_start = header.header_paragraphs as u64 * 16;
+    let compdata_length = (header.cs as usize * 16) + header.ip as usize;
+
+    let mut compdata = Vec::new();
+    compdata.resize(compdata_length, 0);
+    input.seek(SeekFrom::Start(compdata_start))?;
+    input.read_exact(&mut compdata)?;
+
     Ok(())
 }
 
