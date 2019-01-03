@@ -1,9 +1,9 @@
 extern crate getopts;
 
 use std::env;
-use std::error::Error;
+use std::fmt;
 use std::fs::File;
-use std::io::{self, Read, Write, Seek, SeekFrom};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::process;
 
@@ -69,24 +69,52 @@ fn read_mz_header<R: Read>(r: &mut R) -> io::Result<MZHeader> {
     })
 }
 
-// http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK
-fn decompress<F, P>(mut input: F, _output_filename: P) -> Result<(), Box<Error>>
-    where F: Read + Seek,
-          P: AsRef<Path>,
-{
-    input.seek(SeekFrom::Start(0))?;
+enum DecompressError {
+    Io(io::Error),
+    Format(String),
+}
+
+impl From<io::Error> for DecompressError {
+    fn from(err: io::Error) -> Self {
+        DecompressError::Io(err)
+    }
+}
+
+impl fmt::Display for DecompressError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            &DecompressError::Io(ref err) => err.fmt(f),
+            &DecompressError::Format(ref err) => write!(f, "Packed file is corrupt ({})", err),
+        }
+    }
+}
+
+// http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK#File_Format
+fn decompress_mode<P: AsRef<Path>>(input_filename: P, _output_filename: P) -> Result<(), DecompressError> {
+    let input = File::open(&input_filename)
+        .map_err(|err| io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("{}: {}", input_filename.as_ref().display(), err)
+        ))?;
+    let mut input = io::BufReader::new(input);
+
     let header = read_mz_header(&mut input)?;
     if header.signature != MZ_SIGNATURE {
-        return Err(From::from(format!("bad MZ signature 0x{:04x} (expected {:04x}", header.signature, MZ_SIGNATURE)));
+        return Err(DecompressError::Format(format!("bad MZ signature 0x{:04x}; expected 0x{:04x}", header.signature, MZ_SIGNATURE)));
     }
     println!("{:?}", header);
 
     let compdata_start = header.header_paragraphs as u64 * 16;
     let compdata_length = (header.cs as usize * 16) + header.ip as usize;
 
+    // After reading the MZ header, we are at offset 28.
+    if compdata_start < 28 {
+        return Err(DecompressError::Format(format!("bad MZ header size 0x{:04x}", header.header_paragraphs)));
+    }
+    input.seek(SeekFrom::Start(compdata_start))?;
+
     let mut compdata = Vec::new();
     compdata.resize(compdata_length, 0);
-    input.seek(SeekFrom::Start(compdata_start))?;
     input.read_exact(&mut compdata)?;
 
     Ok(())
@@ -100,41 +128,41 @@ Compress or decompress a DOS MZ executable with EXEPACK.",
     write!(w, "{}", opts.usage(&brief))
 }
 
-fn main_sub() -> Result<(), Box<Error>> {
+fn main() {
     let mut opts = getopts::Options::new();
     opts.optflag("d", "decompress", "decompress");
     opts.optflag("h", "help", "show this help");
-    let matches = opts.parse(env::args().skip(1))?;
+    let matches = match opts.parse(env::args().skip(1)) {
+        Ok(matches) => matches,
+        Err(err) => {
+            eprintln!("{}", err);
+            process::exit(1);
+        }
+    };
 
     if matches.opt_present("h") {
-        print_usage(&mut io::stdout(), opts)?;
-        return Ok(())
+        print_usage(&mut io::stdout(), opts).unwrap();
+        return;
     }
 
     if matches.free.len() != 2 {
-        print_usage(&mut io::stderr(), opts)?;
-        return Err(From::from("\nerror: Need INPUT.EXE and OUTPUT.EXE arguments"));
+        print_usage(&mut io::stderr(), opts).unwrap();
+        eprintln!("\nNeed INPUT.EXE and OUTPUT.EXE arguments");
+        process::exit(1);
     }
     let input_filename = &matches.free[0];
     let output_filename = &matches.free[1];
 
-    let input_file = match File::open(input_filename) {
-        Ok(f) => f,
-        Err(err) => return Err(From::from(format!("{}: {}", input_filename, err))),
-    };
-
-    if matches.opt_present("d") {
-        decompress(input_file, output_filename)?;
+    if let Err(err) = if matches.opt_present("d") {
+        decompress_mode(&input_filename, &output_filename)
     } else {
-        unimplemented!("compress");
-    }
-
-    Ok(())
-}
-
-fn main() {
-    if let Err(err) = main_sub() {
+        unimplemented!("compress")
+    } {
         eprintln!("{}", err);
-        process::exit(1);
+        process::exit(match err {
+            DecompressError::Io(_) => 1,
+            // EXEPACK returns 255 on a "Packed file is corrupt" error.
+            DecompressError::Format(_) => 255,
+        });
     }
 }
