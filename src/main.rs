@@ -7,6 +7,8 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::process;
 
+mod stubs;
+
 const MZ_SIGNATURE: u16 = 0x5a4d;
 
 // http://www.delorie.com/djgpp/doc/exe/
@@ -89,6 +91,21 @@ impl fmt::Display for DecompressError {
     }
 }
 
+fn lookup_reference_stub<R: io::Read>(mut input: R) -> io::Result<Option<&'static [u8]>> {
+    let mut stub = Vec::new();
+    for reference_stub in stubs::STUBS.iter() {
+        // We need the reference stubs to be sorted by length.
+        assert!(stub.len() <= reference_stub.len());
+        let old_len = stub.len();
+        stub.resize(reference_stub.len(), 0);
+        input.read_exact(&mut stub[old_len..])?;
+        if &stub == reference_stub {
+            return Ok(Some(reference_stub));
+        }
+    }
+    Ok(None)
+}
+
 // http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK#File_Format
 fn decompress_mode<P: AsRef<Path>>(input_filename: P, _output_filename: P) -> Result<(), DecompressError> {
     let input = File::open(&input_filename)
@@ -105,17 +122,27 @@ fn decompress_mode<P: AsRef<Path>>(input_filename: P, _output_filename: P) -> Re
     println!("{:?}", header);
 
     let compdata_start = header.header_paragraphs as u64 * 16;
-    let compdata_length = (header.cs as usize * 16) + header.ip as usize;
-
-    // After reading the MZ header, we are at offset 28.
-    if compdata_start < 28 {
+    if compdata_start < input.seek(SeekFrom::Current(0))? {
+        // Compressed data overlaps MZ header?
         return Err(DecompressError::Format(format!("bad MZ header size 0x{:04x}", header.header_paragraphs)));
     }
     input.seek(SeekFrom::Start(compdata_start))?;
 
+    // Compressed data starts immediately after the MZ header, and continues up
+    // to cs:0000.
     let mut compdata = Vec::new();
-    compdata.resize(compdata_length, 0);
+    compdata.resize(header.cs as usize * 16, 0);
     input.read_exact(&mut compdata)?;
+
+    // The EXEPACK variables start at cs:0000 and continue up to cs:ip.
+    let mut exepack_header = Vec::new();
+    exepack_header.resize(header.ip as usize, 0);
+    input.read_exact(&mut exepack_header)?;
+    println!("{:?}", exepack_header);
+
+    // The EXEPACK decompression stub starts at cs:ip.
+    let reference_stub = lookup_reference_stub(input);
+    println!("{:?}", reference_stub);
 
     Ok(())
 }
