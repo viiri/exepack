@@ -106,6 +106,77 @@ fn lookup_reference_stub<R: io::Read>(mut input: R) -> io::Result<Option<&'stati
     Ok(None)
 }
 
+fn decompress(buf: &mut [u8], mut src: usize) -> Result<(), String> {
+    // Skip 0xff padding (only up to 16 bytes of it).
+    for _ in 0..16 {
+        if src == 0 {
+            break
+        }
+        if buf[src-1] != 0xff {
+            break
+        }
+        src -= 1;
+    }
+    let mut dst = buf.len();
+    loop {
+        if dst < src {
+            return Err("criss-cross".to_owned());
+        }
+        if src == 0 {
+            return Err("read underflow".to_owned());
+        }
+        let command = buf[src-1];
+        src -= 1;
+        let mut length: usize = 0;
+        if src < 2 {
+            return Err("read underflow".to_owned());
+        }
+        length |= (buf[src-1] as usize) << 8;
+        src -= 1;
+        length |= buf[src-1] as usize;
+        src -= 1;
+        match command & 0xfe {
+            0xb0 => {
+                if src == 0 {
+                    return Err("read underflow".to_owned());
+                }
+                let fill = buf[src-1];
+                src -= 1;
+                println!("fill {:02x} {} {:02x}", command, length, fill);
+                if dst < length {
+                    return Err("write underflow".to_owned());
+                }
+                for i in dst-length..dst {
+                    buf[i] = fill;
+                }
+                dst -= length;
+            }
+            0xb2 => {
+                println!("copy {:02x} {}", command, length);
+                if src < length {
+                    return Err("read underflow".to_owned());
+                }
+                if dst < length {
+                    return Err("write underflow".to_owned());
+                }
+                for i in 0..length {
+                    buf[dst-i-1] = buf[src-i-1];
+                }
+                src -= length;
+                dst -= length;
+            }
+            _ => {
+                return Err(format!("bogus! {:02x}", command));
+            }
+        }
+        if command & 0x01 != 0 {
+            break
+        }
+    }
+    println!("finish src {} dst {}", src, dst);
+    Ok(())
+}
+
 // http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK#File_Format
 fn decompress_mode<P: AsRef<Path>>(input_filename: P, _output_filename: P) -> Result<(), DecompressError> {
     let input = File::open(&input_filename)
@@ -143,6 +214,14 @@ fn decompress_mode<P: AsRef<Path>>(input_filename: P, _output_filename: P) -> Re
     // The EXEPACK decompression stub starts at cs:ip.
     let reference_stub = lookup_reference_stub(input);
     println!("{:?}", reference_stub);
+
+    let size = compdata.len();
+    compdata.resize(81504, 0);
+    // compdata.resize(96976, 0);
+    let res = decompress(&mut compdata, size);
+    println!("res {:?}", res);
+
+    // check for unused trailing data
 
     Ok(())
 }
