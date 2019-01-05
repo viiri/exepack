@@ -1,9 +1,10 @@
 extern crate getopts;
 
+use std::cmp;
 use std::env;
 use std::fmt;
 use std::fs::File;
-use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process;
 
@@ -23,32 +24,39 @@ fn parse_u16le(buf: &[u8], i: usize) -> u16 {
     (buf[i] as u16) | ((buf[i+1] as u16) << 8)
 }
 
-fn read_u16le<R: Read>(r: &mut R) -> io::Result<u16> {
-    let mut buf = [0; 2];
-    r.read_exact(&mut buf)?;
-    Ok((buf[0] as u16) | ((buf[1] as u16) << 8))
+fn escape_u8(c: u8) -> String {
+    format!("\\x{:02x}", c)
 }
 
-#[test]
-fn test_read_u16le() {
-    fn expect_unexpectedeof(x: io::Result<u16>) {
-        match x {
-            Err(ref err) if err.kind() == io::ErrorKind::UnexpectedEof => (),
-            _ => panic!("expected UnexpectedEof, got {:?}", x),
+fn escape(buf: &[u8]) -> String {
+    let mut s = String::new();
+    s.push_str("\"");
+    for c in buf.iter() {
+        if 0x20 <= *c && *c <= 0x7e {
+            s.push(*c as char)
+        } else {
+            s.push_str(&escape_u8(*c))
         }
     }
-    expect_unexpectedeof(read_u16le(&mut io::Cursor::new([])));
-    expect_unexpectedeof(read_u16le(&mut io::Cursor::new([0x12])));
-    assert_eq!(0x3412, read_u16le(&mut io::Cursor::new([0x12, 0x34])).unwrap());
-    assert_eq!(0x3412, read_u16le(&mut io::Cursor::new([0x12, 0x34, 0x56, 0x78])).unwrap());
+    s.push_str("\"");
+    s
 }
 
-const MZ_SIGNATURE: u16 = 0x5a4d; // "MZ"
+const EXE_MAGIC: u16 = 0x5a4d; // "MZ"
+// The length of an EXE header excluding the variable-sized padding.
+const EXE_HEADER_LEN: u64 = 28;
+
+#[derive(Debug)]
+struct EXE {
+    header: EXEHeader,
+    data: Vec<u8>,
+    // relocations
+}
 
 // http://www.delorie.com/djgpp/doc/exe/
 // This is a form of IMAGE_DOS_HEADER from <winnt.h>.
 #[derive(Debug)]
-struct MZHeader {
+struct EXEHeader {
     signature: u16,
     bytes_in_last_block: u16,
     blocks_in_file: u16,
@@ -65,10 +73,10 @@ struct MZHeader {
     overlay_number: u16,
 }
 
-fn read_mz_header<R: Read>(r: &mut R) -> io::Result<MZHeader> {
-    let mut buf = [0; 28];
+fn read_exe_header<R: Read>(r: &mut R) -> io::Result<EXEHeader> {
+    let mut buf = [0; EXE_HEADER_LEN as usize];
     r.read_exact(&mut buf[..])?;
-    Ok(MZHeader{
+    Ok(EXEHeader{
         signature: parse_u16le(&buf, 0),
         bytes_in_last_block: parse_u16le(&buf, 2),
         blocks_in_file: parse_u16le(&buf, 4),
@@ -86,9 +94,74 @@ fn read_mz_header<R: Read>(r: &mut R) -> io::Result<MZHeader> {
     })
 }
 
+enum EXEFormatError {
+    BadMagic(u16),
+    BadNumPages(u16, u16),
+    HeaderTooShort(u16),
+}
+
+impl fmt::Display for EXEFormatError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            &EXEFormatError::BadMagic(e_magic) => write!(f, "Bad EXE magic 0x{:04x}; expected 0x{:04x}", e_magic, EXE_MAGIC),
+            &EXEFormatError::BadNumPages(e_cb, e_cblp) => write!(f, "Bad EXE size {}×512+{}", e_cb, e_cblp),
+            &EXEFormatError::HeaderTooShort(e_cparhdr) => write!(f, "EXE header of {} bytes is too small", e_cparhdr as u64 * 16),
+        }
+    }
+}
+
+enum EXEPACKFormatError {
+    UnknownStub(Vec<u8>),
+    BadMagic(Vec<u8>, u16),
+    HeaderSizeMismatch(Vec<u8>, usize),
+    PaddingTooShort(u16),
+    PaddingTooLong(u16),
+    EXEPACKTooShort(u16, usize),
+    Crossover(usize, usize),
+    SrcOverflow(),
+    FillOverflow(usize, usize, u8, usize, u8),
+    CopyOverflow(usize, usize, u8, usize),
+    BogusCommand(usize, u8, usize),
+    Gap(usize, usize),
+}
+
+impl fmt::Display for EXEPACKFormatError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            &EXEPACKFormatError::UnknownStub(ref stub) =>
+                write!(f, "Unknown decompression stub {}", escape(&stub)),
+            &EXEPACKFormatError::BadMagic(ref header, magic) =>
+                write!(f, "EXEPACK header {} has bad magic 0x{:04x}; expected 0x{:04x}", escape(&header), magic, EXEPACK_MAGIC),
+            &EXEPACKFormatError::HeaderSizeMismatch(ref header, expected_len) =>
+                write!(f, "EXEPACK header {} is {} bytes, expected {}", escape(&header), header.len(), expected_len),
+            &EXEPACKFormatError::PaddingTooShort(skip_len) =>
+                write!(f, "EXEPACK padding length of {} paragraphs is invalid", skip_len),
+            &EXEPACKFormatError::PaddingTooLong(skip_len) =>
+                write!(f, "EXEPACK padding length of {} paragraphs is too long", skip_len),
+            &EXEPACKFormatError::EXEPACKTooShort(exepack_size, header_and_stub_len) =>
+                write!(f, "EXEPACK size of {} bytes is too short for header and stub of {} bytes", exepack_size, header_and_stub_len),
+            &EXEPACKFormatError::Crossover(dst, src) =>
+                write!(f, "write index {} outpaced read index {}", dst, src),
+            &EXEPACKFormatError::SrcOverflow() =>
+                write!(f, "reached end of compressed stream without seeing a termination command"),
+            &EXEPACKFormatError::FillOverflow(dst, _src, _command, length, fill) =>
+                write!(f, "write overflow: fill {}×'{}' at index {}", length, escape_u8(fill), dst),
+            &EXEPACKFormatError::CopyOverflow(dst, src, _command, length) =>
+                write!(f, "{}: copy {} bytes from index {} to index {}",
+                    if src < length { "read overflow" } else { "write overflow" },
+                    length, src, dst),
+            &EXEPACKFormatError::BogusCommand(src, command, length) =>
+                write!(f, "unknown command 0x{:02x} with ostensible length {} at index {}", command, length, src),
+            &EXEPACKFormatError::Gap(dst, original_src) =>
+                write!(f, "decompression left a gap of {} unwritten bytes between write index {} and original read index {}", dst - original_src, dst, original_src),
+        }
+    }
+}
+
 enum DecompressError {
     Io(io::Error),
-    Format(String),
+    EXE(EXEFormatError),
+    EXEPACK(EXEPACKFormatError),
 }
 
 impl From<io::Error> for DecompressError {
@@ -97,28 +170,26 @@ impl From<io::Error> for DecompressError {
     }
 }
 
+impl From<EXEFormatError> for DecompressError {
+    fn from(err: EXEFormatError) -> Self {
+        DecompressError::EXE(err)
+    }
+}
+
+impl From<EXEPACKFormatError> for DecompressError {
+    fn from(err: EXEPACKFormatError) -> Self {
+        DecompressError::EXEPACK(err)
+    }
+}
+
 impl fmt::Display for DecompressError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             &DecompressError::Io(ref err) => err.fmt(f),
-            &DecompressError::Format(ref err) => write!(f, "Packed file is corrupt ({})", err),
+            &DecompressError::EXE(ref err) => err.fmt(f),
+            &DecompressError::EXEPACK(ref err) => write!(f, "Packed file is corrupt: {}", err),
         }
     }
-}
-
-fn lookup_reference_stub<R: io::Read>(mut input: R) -> io::Result<Option<&'static [u8]>> {
-    let mut stub = Vec::new();
-    for reference_stub in stubs::STUBS.iter() {
-        // We need the reference stubs to be sorted by length.
-        assert!(stub.len() <= reference_stub.len());
-        let old_len = stub.len();
-        stub.resize(reference_stub.len(), 0);
-        input.read_exact(&mut stub[old_len..])?;
-        if &stub == reference_stub {
-            return Ok(Some(reference_stub));
-        }
-    }
-    Ok(None)
 }
 
 struct TopLevelError {
@@ -135,7 +206,11 @@ impl fmt::Display for TopLevelError {
     }
 }
 
-fn decompress(buf: &mut [u8], mut src: usize, mut dst: usize) -> Result<(), String> {
+// The basic decompression loop. The compressed data are read (going backwards)
+// starting at src, and written (also going backwards) back to the same buffer
+// starting at dst.
+fn decompress(buf: &mut [u8], mut dst: usize, mut src: usize) -> Result<(), EXEPACKFormatError> {
+    let original_src = src;
     // Skip 0xff padding (only up to 16 bytes of it).
     for _ in 0..16 {
         if src == 0 {
@@ -148,163 +223,295 @@ fn decompress(buf: &mut [u8], mut src: usize, mut dst: usize) -> Result<(), Stri
     }
     loop {
         if dst < src {
-            return Err("criss-cross".to_owned());
+            // The command we're about to read was overwritten.
+            return Err(EXEPACKFormatError::Crossover(dst, src))
         }
-        if src == 0 {
-            return Err("read underflow".to_owned());
-        }
-        let command = buf[src-1];
-        src -= 1;
+        // Read the command byte.
+        src = src.checked_sub(1).ok_or(EXEPACKFormatError::SrcOverflow())?;
+        let command = buf[src];
+        // Read the 16-bit length.
         let mut length: usize = 0;
-        if src < 2 {
-            return Err("read underflow".to_owned());
-        }
-        length |= (buf[src-1] as usize) << 8;
-        src -= 1;
-        length |= buf[src-1] as usize;
-        src -= 1;
+        src = src.checked_sub(1).ok_or(EXEPACKFormatError::SrcOverflow())?;
+        length |= (buf[src] as usize) << 8;
+        src = src.checked_sub(1).ok_or(EXEPACKFormatError::SrcOverflow())?;
+        length |= buf[src] as usize;
         match command & 0xfe {
             0xb0 => {
-                if src == 0 {
-                    return Err("read underflow".to_owned());
+                src = src.checked_sub(1).ok_or(EXEPACKFormatError::SrcOverflow())?;
+                let fill = buf[src];
+                // debug!("0x{:02x} fill {} 0x{:02x}", command, length, fill);
+                dst = dst.checked_sub(length).ok_or(EXEPACKFormatError::FillOverflow(dst, src, command, length, fill))?;
+                for i in 0..length {
+                    buf[dst+i] = fill;
                 }
-                let fill = buf[src-1];
-                src -= 1;
-                debug!("fill {:02x} {} {:02x}", command, length, fill);
-                if dst < length {
-                    return Err("write underflow".to_owned());
-                }
-                for i in dst-length..dst {
-                    buf[i] = fill;
-                }
-                dst -= length;
             }
             0xb2 => {
-                debug!("copy {:02x} {}", command, length);
-                if src < length {
-                    return Err("read underflow".to_owned());
-                }
-                if dst < length {
-                    return Err("write underflow".to_owned());
-                }
+                // debug!("0x{:02x} copy {}", command, length);
+                src = src.checked_sub(length).ok_or(EXEPACKFormatError::CopyOverflow(dst, src, command, length))?;
+                dst = dst.checked_sub(length).ok_or(EXEPACKFormatError::CopyOverflow(dst, src, command, length))?;
                 for i in 0..length {
-                    buf[dst-i-1] = buf[src-i-1];
+                    buf[dst+length-i-1] = buf[src+length-i-1];
                 }
-                src -= length;
-                dst -= length;
             }
             _ => {
-                return Err(format!("bogus! {:02x}", command));
+                return Err(EXEPACKFormatError::BogusCommand(src, command, length));
             }
         }
         if command & 0x01 != 0 {
             break
         }
     }
-    debug!("finish src {} dst {}", src, dst);
+    if original_src < dst {
+        // Decompression finished okay but left a gap of uninitialized bytes.
+        return Err(EXEPACKFormatError::Gap(dst, original_src));
+    }
     Ok(())
 }
 
-const EXEPACK_SIGNATURE: u16 = 0x4252; // "RB"
+const EXEPACK_MAGIC: u16 = 0x4252; // "RB"
 
-fn decompress_format_skip_len(mut data: &mut Vec<u8>, exepack_vars_buffer: &[u8]) -> Result<(), DecompressError> {
-    #[derive(Debug)]
-    struct EXEPACKHeader {
-        real_ip: u16,
-        real_cs: u16,
-        mem_start: u16,
-        exepack_size: u16,
-        real_sp: u16,
-        real_ss: u16,
-        dest_len: u16,
-        skip_len: u16,
-        signature: u16,
-    };
-    assert_eq!(exepack_vars_buffer.len(), 18);
-    let mut r = io::Cursor::new(exepack_vars_buffer);
-    let exepack_header = EXEPACKHeader {
-        real_ip: read_u16le(&mut r)?,
-        real_cs: read_u16le(&mut r)?,
-        mem_start: read_u16le(&mut r)?,
-        exepack_size: read_u16le(&mut r)?,
-        real_sp: read_u16le(&mut r)?,
-        real_ss: read_u16le(&mut r)?,
-        dest_len: read_u16le(&mut r)?,
-        skip_len: read_u16le(&mut r)?,
-        signature: read_u16le(&mut r)?,
-    };
-    debug!("{:?}", exepack_header);
-    if exepack_header.signature != EXEPACK_SIGNATURE {
-        return Err(DecompressError::Format(format!("bad EXEPACK signature 0x{:04x}; expected 0x{:04x}", exepack_header.signature, EXEPACK_SIGNATURE)));
+// http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK#EXEPACK_variables
+#[derive(Debug)]
+struct EXEPACKHeader {
+    real_ip: u16,
+    real_cs: u16,
+    // "mem_start" is actually just scratch space for the decompression stub.
+    exepack_size: u16,
+    real_sp: u16,
+    real_ss: u16,
+    dest_len: u16,
+    skip_len: u16,
+    signature: u16,
+}
+
+fn parse_exepack_header(buf: &[u8], uses_skip_len: bool) -> Result<EXEPACKHeader, EXEPACKFormatError> {
+    Ok(if !uses_skip_len {
+        if buf.len() != 16 {
+            return Err(EXEPACKFormatError::HeaderSizeMismatch(buf.to_vec(), 16));
+        }
+        EXEPACKHeader {
+            real_ip: parse_u16le(&buf, 0),
+            real_cs: parse_u16le(&buf, 2),
+            // Ignore "mem_start".
+            exepack_size: parse_u16le(&buf, 6),
+            real_sp: parse_u16le(&buf, 8),
+            real_ss: parse_u16le(&buf, 10),
+            dest_len: parse_u16le(&buf, 12),
+            skip_len: 1,
+            signature: parse_u16le(&buf, 14),
+        }
+    } else {
+        if buf.len() != 18 {
+            return Err(EXEPACKFormatError::HeaderSizeMismatch(buf.to_vec(), 18));
+        }
+        EXEPACKHeader {
+            real_ip: parse_u16le(&buf, 0),
+            real_cs: parse_u16le(&buf, 2),
+            // Ignore "mem_start".
+            exepack_size: parse_u16le(&buf, 6),
+            real_sp: parse_u16le(&buf, 8),
+            real_ss: parse_u16le(&buf, 10),
+            dest_len: parse_u16le(&buf, 12),
+            skip_len: parse_u16le(&buf, 14),
+            signature: parse_u16le(&buf, 16),
+        }
+    })
+}
+
+// Discard a certain number of bytes from an io::BufRead.
+fn discard<R: io::BufRead>(br: &mut R, mut n: u64) -> io::Result<()> {
+    while n > 0 {
+        let len = {
+            let buf = br.fill_buf()?;
+            cmp::min(n, buf.len() as u64)
+        };
+        br.consume(len as usize);
+        n = n.checked_sub(len).unwrap();
     }
-
-    let skip_len = 16 * (exepack_header.skip_len as usize).checked_sub(1)
-        .ok_or(DecompressError::Format("skip_len too small".to_owned()))?;
-    let compressed_size = data.len().checked_sub(skip_len)
-        .ok_or(DecompressError::Format("skip_len too large".to_owned()))?;
-    let uncompressed_size = (exepack_header.dest_len as usize * 16).checked_sub(skip_len)
-        .ok_or(DecompressError::Format("skip_len too large".to_owned()))?;
-    if uncompressed_size < compressed_size {
-        return Err(DecompressError::Format("dest_len too small".to_owned()));
-    }
-    data.resize(uncompressed_size, 0);
-    let res = decompress(&mut data, compressed_size, uncompressed_size);
-    debug!("res {:?}", res);
-
     Ok(())
 }
 
-struct MZEXE {
-    header: MZHeader,
-    data: Vec<u8>,
-    // relocations
+// Like io::Read::read_exact, except that it returns the number of bytes read
+// instead of io::ErrorKind::UnexpectedEof when it reaches EOF.
+fn read_up_to<R: Read>(r: &mut R, buf: &mut [u8]) -> io::Result<usize> {
+    let mut total = 0;
+    while total < buf.len() {
+        let n = r.read(&mut buf[total..])?;
+        if n == 0 {
+            break
+        }
+        total += n;
+    }
+    Ok(total)
+}
+
+// Read a decompression stub and return both the stub and a boolean indicating
+// whether the EXEPACK format that the stub implements uses an explicit skip_len
+// variable or not. It works by incrementally reading and comparing against a
+// table of known stubs. In the event that there is no match, returns whatever
+// we have read so far along with None for the skip_len indicator.
+fn read_stub<R: Read>(r: &mut R) -> io::Result<(Vec<u8>, Option<bool>)> {
+    // Mapping of known stubs to whether they use skip_len. Needs to be sorted
+    // by length.
+    const KNOWN_STUBS: [(&[u8], bool); 2] = [
+        (stubs::STUB_258, false),
+        (stubs::STUB_283, true),
+    ];
+    let mut stub = Vec::new();
+    for &(known_stub, uses_skip_len) in KNOWN_STUBS.iter() {
+        assert!(stub.len() <= known_stub.len());
+        let old_len = stub.len();
+        stub.resize(known_stub.len(), 0);
+        let n = read_up_to(r, &mut stub[old_len..])?;
+        // A short read means no match and we are done.
+        if old_len + n < stub.len() {
+            stub.resize(old_len + n, 0);
+            break;
+        }
+        if &stub == &known_stub {
+            return Ok((stub, Some(uses_skip_len)))
+        }
+    }
+    return Ok((stub, None))
 }
 
 // Unpack an input executable and return the elements of an unpacked executable.
-fn unpack<F: Read + Seek>(input: &mut F) -> Result<MZEXE, DecompressError> {
-    let header = read_mz_header(input)
+// file_size_hint is an optional externally provided hint of the file's total
+// length, which we use to emit a warning when it exceeds the length stated in
+// the EXE header.
+fn unpack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE, DecompressError> {
+    let mut input = io::BufReader::new(input);
+
+    let exe_header = read_exe_header(&mut input)
         .map_err(|err| io::Error::new(err.kind(), format!("reading EXE header: {}", err)))?;
-    debug!("{:?}", header);
-    if header.signature != MZ_SIGNATURE {
-        return Err(DecompressError::Format(format!("bad EXE magic 0x{:04x}; expected 0x{:04x}", header.signature, MZ_SIGNATURE)));
+    debug!("{:?}", exe_header);
+
+    // Begin consistency tests on the fields of the EXE header.
+    if exe_header.signature != EXE_MAGIC {
+        return Err(DecompressError::EXE(EXEFormatError::BadMagic(exe_header.signature)));
     }
 
-    let compdata_start = header.header_paragraphs as u64 * 16;
-    if compdata_start < input.seek(SeekFrom::Current(0))? {
-        // Compressed data overlaps MZ header?
-        return Err(DecompressError::Format(format!("bad MZ header size 0x{:04x}", header.header_paragraphs)));
+    // Consistency of e_cparhdr. We need the stated header length to be at least
+    // as large as the header we just read.
+    let exe_header_len = exe_header.header_paragraphs as u64 * 16;
+    if exe_header_len < EXE_HEADER_LEN {
+        return Err(DecompressError::EXE(EXEFormatError::HeaderTooShort(exe_header.header_paragraphs)));
     }
-    input.seek(SeekFrom::Start(compdata_start))?;
 
-    // Compressed data starts immediately after the MZ header, and continues up
-    // to cs:0000.
-    let mut compdata = Vec::new();
-    compdata.resize(header.cs as usize * 16, 0);
-    input.read_exact(&mut compdata)?;
+    // Consistency of e_cp and e_cblp.
+    if exe_header.blocks_in_file == 0 || exe_header.bytes_in_last_block >= 512 {
+        return Err(DecompressError::EXE(EXEFormatError::BadNumPages(exe_header.blocks_in_file, exe_header.bytes_in_last_block)));
+    }
+    let exe_len = (exe_header.blocks_in_file - 1) as u64 * 512
+        + if exe_header.bytes_in_last_block == 0 { 512 } else { exe_header.bytes_in_last_block } as u64;
+    if exe_len < exe_header_len {
+        return Err(DecompressError::EXE(EXEFormatError::BadNumPages(exe_header.blocks_in_file, exe_header.bytes_in_last_block)));
+    }
+    if let Some(file_len) = file_len_hint {
+        // The EXE file length is allowed to be smaller than the length of the
+        // file containing it. Emit a warning that we are ignoring trailing
+        // garbage. The opposite situation, exe_len > file_len, is an error that
+        // we will notice later when we get an unexpected EOF.
+        if exe_len < file_len {
+            eprintln!("warning: EXE file size is {}; ignoring {} trailing bytes", file_len, file_len - exe_len);
+        }
+    }
 
-    // The EXEPACK variables start at cs:0000 and continue up to cs:ip.
-    let mut exepack_vars_buffer = Vec::new();
-    exepack_vars_buffer.resize(header.ip as usize, 0);
-    input.read_exact(&mut exepack_vars_buffer)?;
-    debug!("{:?}", exepack_vars_buffer);
+    // Read and discard any header padding.
+    discard(&mut input, exe_header_len - EXE_HEADER_LEN)?;
+    // Now we are positioned just after the EXE header. Trim any data that lies
+    // beyond the length of the EXE file stated in the header.
+    let mut input = input.take(exe_len - exe_header_len);
 
-    // The EXEPACK decompression stub starts at cs:ip.
-    let reference_stub = lookup_reference_stub(input)?;
-    debug!("{:?}", reference_stub);
+    // Compressed data starts immediately after the EXE header and ends at
+    // cs:0000. We will decompress into the very same buffer (after expanding
+    // it).
+    let mut work_buffer = Vec::new();
+    work_buffer.resize(exe_header.cs as usize * 16, 0);
+    input.read_exact(&mut work_buffer)?;
 
-    decompress_format_skip_len(&mut compdata, &exepack_vars_buffer)?;
+    // The EXEPACK header starts at cs:0000 and ends at cs:ip. We won't know the
+    // layout of the EXEPACK header (i.e., whether there is a skip_len member)
+    // until after we have read and identified the decompression stub.
+    let mut exepack_header_buffer = Vec::new();
+    exepack_header_buffer.resize(exe_header.ip as usize, 0);
+    input.read_exact(&mut exepack_header_buffer)?;
+
+    // The decompression stub starts at cs:ip. We incrementally read with
+    // increasing, known stub lengths until we find a match or exhaust the list
+    // of known stubs. What we care about is whether the stub uses an explicit
+    // skip_len in the EXEPACK header, or an implicit skip_len of 1.
+    let (mut stub, uses_skip_len) = read_stub(&mut input)?;
+    let uses_skip_len = match uses_skip_len {
+        Some(uses_skip_len) => uses_skip_len,
+        None => {
+            // Our decompression stub wasn't in the table. Read some more data
+            // (to have a chance of including "Packed file is corrupt" when the
+            // stub is longer than any we know of) and return an error.
+            let old_len = stub.len();
+            if stub.len() < 512 {
+                stub.resize(512, 0);
+            }
+            let n = read_up_to(&mut input, &mut stub[old_len..]).unwrap_or(0); // Ignore an io::Error here.
+            stub.resize(old_len + n, 0);
+            return Err(DecompressError::EXEPACK(EXEPACKFormatError::UnknownStub(stub)));
+        }
+    };
+
+    // Now that we know what stub we're dealing with, we can interpret the
+    // EXEPACK header.
+    let exepack_header = parse_exepack_header(&exepack_header_buffer, uses_skip_len)?;
+    if exepack_header.signature != EXEPACK_MAGIC {
+        return Err(DecompressError::EXEPACK(EXEPACKFormatError::BadMagic(exepack_header_buffer, exepack_header.signature)));
+    }
+    debug!("{:?}", exepack_header);
+
+    // The EXEPACK header's exepack_size field contains the length of the
+    // EXEPACK header, the decompression stub, and the relocation table all
+    // together. The decompression stub uses this value to control how much of
+    // itself to copy out of the way before starting the main compression loop.
+    // Therefore we are justified in raising an error if any reads go past
+    // exepack_size.
+    let mut input = {
+        let read_so_far = exepack_header_buffer.len() + stub.len();
+        if (exepack_header.exepack_size as usize) < read_so_far {
+            return Err(DecompressError::EXEPACK(EXEPACKFormatError::EXEPACKTooShort(exepack_header.exepack_size, read_so_far)));
+        }
+        input.take((exepack_header.exepack_size as usize - read_so_far) as u64)
+    };
+
+    // The skip_len variable is 1 greater than the number of paragraphs of
+    // padding between the compressed data and the EXEPACK header. It cannot be
+    // 0 because that would mean −1 paragraphs of padding.
+    let padding_len = 16 * (exepack_header.skip_len as usize).checked_sub(1)
+        .ok_or(DecompressError::EXEPACK(EXEPACKFormatError::PaddingTooShort(exepack_header.skip_len)))?;
+    let compressed_len = work_buffer.len().checked_sub(padding_len)
+        .ok_or(DecompressError::EXEPACK(EXEPACKFormatError::PaddingTooLong(exepack_header.skip_len)))?;
+    // It's weird that skip_len applies to the *un*compressed length as well,
+    // but it does (see the disassembly in stubs.rs). Why didn't they just make
+    // data_len that much smaller?
+    let uncompressed_len = (exepack_header.dest_len as usize * 16).checked_sub(padding_len)
+        .ok_or(DecompressError::EXEPACK(EXEPACKFormatError::PaddingTooLong(exepack_header.skip_len)))?;
+    // Expand the buffer to hold the uncompressed data.
+    if uncompressed_len > compressed_len {
+        work_buffer.resize(uncompressed_len, 0);
+    }
+    // Now let's actually decompress the buffer.
+    decompress(&mut work_buffer, uncompressed_len, compressed_len)?;
 
     // relocations
 
-    // check for unused trailing data
+    // It's not an error if there is trailing data here (i.e., if
+    // exepack_header.exepack_size is larger than it needs to be). Any trailing data
+    // would be ignored by the EXEPACK decompression stub.
 
-    Ok(MZEXE{header: header, data: Vec::new()})
+    Ok(EXE{header: exe_header, data: work_buffer})
 }
 
-fn unpack_file<P: AsRef<Path>>(path: P) -> Result<MZEXE, DecompressError> {
-    let input = File::open(&path)?;
-    let mut input = io::BufReader::new(input);
-    unpack(&mut input)
+fn unpack_file<P: AsRef<Path>>(path: P) -> Result<EXE, DecompressError> {
+    let mut input = File::open(&path)?;
+    let file_len = input.metadata()?.len();
+    unpack(&mut input, Some(file_len))
 }
 
 // http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK#File_Format
@@ -316,6 +523,7 @@ fn decompress_mode<P: AsRef<Path>>(input_path: P, _output_path: P) -> Result<(),
         }),
         Ok(f) => f,
     };
+    debug!("{:?}", exe);
 
     Ok(())
 }
@@ -323,7 +531,7 @@ fn decompress_mode<P: AsRef<Path>>(input_path: P, _output_path: P) -> Result<(),
 fn print_usage<W: Write>(w: &mut W, opts: getopts::Options) -> io::Result<()> {
     let brief = format!("\
 Usage: {} [OPTION]... INPUT.EXE OUTPUT.EXE\n\
-Compress or decompress a DOS MZ executable with EXEPACK.",
+Compress or decompress a DOS EXE executable with EXEPACK.",
         env::args().next().unwrap());
     write!(w, "{}", opts.usage(&brief))
 }
@@ -360,9 +568,9 @@ fn main() {
     } {
         eprintln!("{}", err);
         process::exit(match err.kind {
-            DecompressError::Io(_) => 1,
+            DecompressError::Io(_) | DecompressError::EXE(_) => 1,
             // EXEPACK returns 255 on a "Packed file is corrupt" error.
-            DecompressError::Format(_) => 255,
+            DecompressError::EXEPACK(_) => 255,
         });
     }
 }
