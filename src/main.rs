@@ -9,6 +9,15 @@ use std::process;
 
 mod stubs;
 
+const DEBUG: bool = true;
+
+macro_rules! debug {
+    ($($x:tt)*) => {
+        if DEBUG {
+            eprintln!($($x)*);
+        }
+    };
+
 const MZ_SIGNATURE: u16 = 0x5a4d; // "MZ"
 
 // http://www.delorie.com/djgpp/doc/exe/
@@ -141,7 +150,7 @@ fn decompress(buf: &mut [u8], mut src: usize, mut dst: usize) -> Result<(), Stri
                 }
                 let fill = buf[src-1];
                 src -= 1;
-                println!("fill {:02x} {} {:02x}", command, length, fill);
+                debug!("fill {:02x} {} {:02x}", command, length, fill);
                 if dst < length {
                     return Err("write underflow".to_owned());
                 }
@@ -151,7 +160,7 @@ fn decompress(buf: &mut [u8], mut src: usize, mut dst: usize) -> Result<(), Stri
                 dst -= length;
             }
             0xb2 => {
-                println!("copy {:02x} {}", command, length);
+                debug!("copy {:02x} {}", command, length);
                 if src < length {
                     return Err("read underflow".to_owned());
                 }
@@ -172,7 +181,7 @@ fn decompress(buf: &mut [u8], mut src: usize, mut dst: usize) -> Result<(), Stri
             break
         }
     }
-    println!("finish src {} dst {}", src, dst);
+    debug!("finish src {} dst {}", src, dst);
     Ok(())
 }
 
@@ -204,7 +213,7 @@ fn decompress_format_skip_len(mut data: &mut Vec<u8>, exepack_vars_buffer: &[u8]
         skip_len: read_u16le(&mut r)?,
         signature: read_u16le(&mut r)?,
     };
-    println!("{:?}", exepack_header);
+    debug!("{:?}", exepack_header);
     if exepack_header.signature != EXEPACK_SIGNATURE {
         return Err(DecompressError::Format(format!("bad EXEPACK signature 0x{:04x}; expected 0x{:04x}", exepack_header.signature, MZ_SIGNATURE)));
     }
@@ -220,7 +229,7 @@ fn decompress_format_skip_len(mut data: &mut Vec<u8>, exepack_vars_buffer: &[u8]
     }
     data.resize(uncompressed_size, 0);
     let res = decompress(&mut data, compressed_size, uncompressed_size);
-    println!("res {:?}", res);
+    debug!("res {:?}", res);
 
     Ok(())
 }
@@ -235,7 +244,7 @@ fn decompress_mode<P: AsRef<Path>>(input_filename: P, _output_filename: P) -> Re
     let mut input = io::BufReader::new(input);
 
     let header = read_mz_header(&mut input)?;
-    println!("{:?}", header);
+    debug!("{:?}", header);
     if header.signature != MZ_SIGNATURE {
         return Err(DecompressError::Format(format!("bad MZ signature 0x{:04x}; expected 0x{:04x}", header.signature, MZ_SIGNATURE)));
     }
@@ -257,11 +266,11 @@ fn decompress_mode<P: AsRef<Path>>(input_filename: P, _output_filename: P) -> Re
     let mut exepack_vars_buffer = Vec::new();
     exepack_vars_buffer.resize(header.ip as usize, 0);
     input.read_exact(&mut exepack_vars_buffer)?;
-    println!("{:?}", exepack_vars_buffer);
+    debug!("{:?}", exepack_vars_buffer);
 
     // The EXEPACK decompression stub starts at cs:ip.
     let reference_stub = lookup_reference_stub(input);
-    println!("{:?}", reference_stub);
+    debug!("{:?}", reference_stub);
 
     decompress_format_skip_len(&mut compdata, &exepack_vars_buffer)?;
 
