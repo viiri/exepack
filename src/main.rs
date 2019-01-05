@@ -7,6 +7,7 @@ use std::fs::File;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process;
+use std::str;
 
 mod stubs;
 
@@ -30,15 +31,13 @@ fn escape_u8(c: u8) -> String {
 
 fn escape(buf: &[u8]) -> String {
     let mut s = String::new();
-    s.push_str("\"");
     for c in buf.iter() {
-        if 0x20 <= *c && *c <= 0x7e {
+        if c.is_ascii_alphanumeric() {
             s.push(*c as char)
         } else {
             s.push_str(&escape_u8(*c))
         }
     }
-    s.push_str("\"");
     s
 }
 
@@ -111,7 +110,7 @@ impl fmt::Display for EXEFormatError {
 }
 
 enum EXEPACKFormatError {
-    UnknownStub(Vec<u8>),
+    UnknownStub(Vec<u8>, Vec<u8>),
     BadMagic(Vec<u8>, u16),
     HeaderSizeMismatch(Vec<u8>, usize),
     PaddingTooShort(u16),
@@ -128,12 +127,12 @@ enum EXEPACKFormatError {
 impl fmt::Display for EXEPACKFormatError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            &EXEPACKFormatError::UnknownStub(ref stub) =>
-                write!(f, "Unknown decompression stub {}", escape(&stub)),
+            &EXEPACKFormatError::UnknownStub(ref _header_buffer, ref _stub) =>
+                write!(f, "Unknown decompression stub"),
             &EXEPACKFormatError::BadMagic(ref header, magic) =>
-                write!(f, "EXEPACK header {} has bad magic 0x{:04x}; expected 0x{:04x}", escape(&header), magic, EXEPACK_MAGIC),
+                write!(f, "EXEPACK header \"{}\" has bad magic 0x{:04x}; expected 0x{:04x}", escape(&header), magic, EXEPACK_MAGIC),
             &EXEPACKFormatError::HeaderSizeMismatch(ref header, expected_len) =>
-                write!(f, "EXEPACK header {} is {} bytes, expected {}", escape(&header), header.len(), expected_len),
+                write!(f, "EXEPACK header \"{}\" is {} bytes, expected {}", escape(&header), header.len(), expected_len),
             &EXEPACKFormatError::PaddingTooShort(skip_len) =>
                 write!(f, "EXEPACK padding length of {} paragraphs is invalid", skip_len),
             &EXEPACKFormatError::PaddingTooLong(skip_len) =>
@@ -187,7 +186,12 @@ impl fmt::Display for DecompressError {
         match self {
             &DecompressError::Io(ref err) => err.fmt(f),
             &DecompressError::EXE(ref err) => err.fmt(f),
-            &DecompressError::EXEPACK(ref err) => write!(f, "Packed file is corrupt: {}", err),
+            &DecompressError::EXEPACK(ref err) => {
+                match err {
+                    &EXEPACKFormatError::UnknownStub(_, _) => err.fmt(f),
+                    _ => write!(f, "Packed file is corrupt: {}", err),
+                }
+            }
         }
     }
 }
@@ -454,7 +458,7 @@ fn unpack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE, Dec
             }
             let n = read_up_to(&mut input, &mut stub[old_len..]).unwrap_or(0); // Ignore an io::Error here.
             stub.resize(old_len + n, 0);
-            return Err(DecompressError::EXEPACK(EXEPACKFormatError::UnknownStub(stub)));
+            return Err(DecompressError::EXEPACK(EXEPACKFormatError::UnknownStub(exepack_header_buffer, stub)));
         }
     };
 
@@ -528,6 +532,75 @@ fn decompress_mode<P: AsRef<Path>>(input_path: P, _output_path: P) -> Result<(),
     Ok(())
 }
 
+const EXEPACK_ERRMSG: &[u8] = b"Packed file is corrupt";
+
+fn stub_resembles_exepack(stub: &[u8]) -> bool {
+    // No equivalent of str::contains for &[u8]...
+    for i in 0.. {
+        if i + EXEPACK_ERRMSG.len() > stub.len() {
+            break;
+        }
+        if &stub[i..i+EXEPACK_ERRMSG.len()] == EXEPACK_ERRMSG {
+            return true;
+        }
+    }
+    false
+}
+
+#[test]
+fn test_stub_resembles_exepack() {
+    assert_eq!(stub_resembles_exepack(b""), false);
+    assert_eq!(stub_resembles_exepack(b"XXPacked XXPacked file is corrup"), false);
+    assert_eq!(stub_resembles_exepack(b"Packed file is corrupt"), true);
+    assert_eq!(stub_resembles_exepack(b"XXPacked file is corrupt"), true);
+    assert_eq!(stub_resembles_exepack(b"XXPacked file is corruptXXPacked file is corruptXX"), true);
+}
+
+fn write_escaped_stub_for_submission<W: Write>(
+    w: &mut W,
+    exepack_header_buffer: &[u8],
+    stub: &[u8]
+) -> io::Result<()> {
+    let mut buf = Vec::new();
+    buf.extend_from_slice(exepack_header_buffer);
+    buf.extend_from_slice(stub);
+    for (i, chunk) in escape(&buf).as_bytes()
+        .chunks(64)
+        .enumerate()
+    {
+        writeln!(w, "={:02}={}==", i, str::from_utf8(chunk).unwrap())?;
+    }
+    Ok(())
+}
+
+fn display_unknown_stub<W: Write>(
+    w: &mut W,
+    exepack_header_buffer: &[u8],
+    stub: &[u8]
+) -> io::Result<()> {
+    if stub_resembles_exepack(stub) {
+        write!(w, "\
+\n\
+The input contains {:?}, but does not match a\n\
+format that this program knows about. Please send the below listing to\n\
+\tdavid@bamsoftware.com\n\
+ideally with a link to or copy of the executable, so that a future\n\
+version can support it.\n\
+\n",
+            str::from_utf8(EXEPACK_ERRMSG).unwrap()
+        )?;
+        write_escaped_stub_for_submission(w, exepack_header_buffer, stub)?;
+    } else {
+        write!(w, "\
+\n\
+The input does not contain {:?} within the first\n\
+page of code. Is it really EXEPACK?\n",
+            str::from_utf8(EXEPACK_ERRMSG).unwrap()
+        )?;
+    }
+    Ok(())
+}
+
 fn print_usage<W: Write>(w: &mut W, opts: getopts::Options) -> io::Result<()> {
     let brief = format!("\
 Usage: {} [OPTION]... INPUT.EXE OUTPUT.EXE\n\
@@ -567,6 +640,12 @@ fn main() {
         unimplemented!("compress")
     } {
         eprintln!("{}", err);
+        if let DecompressError::EXEPACK(EXEPACKFormatError::UnknownStub(ref exepack_header_buffer, ref stub)) = err.kind {
+            // UnknownStub gets special treatment. We search for "Packed
+            // file is corrupt" and display the stub if it is found, or warn
+            // that the input may not be EXEPACK if it is not.
+            display_unknown_stub(&mut io::stderr(), &exepack_header_buffer, &stub).unwrap();
+        }
         process::exit(match err.kind {
             DecompressError::Io(_) | DecompressError::EXE(_) => 1,
             // EXEPACK returns 255 on a "Packed file is corrupt" error.
