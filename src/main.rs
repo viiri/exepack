@@ -4,7 +4,7 @@ use std::env;
 use std::fmt;
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process;
 
 mod stubs;
@@ -17,6 +17,31 @@ macro_rules! debug {
             eprintln!($($x)*);
         }
     };
+}
+
+fn parse_u16le(buf: &[u8], i: usize) -> u16 {
+    (buf[i] as u16) | ((buf[i+1] as u16) << 8)
+}
+
+fn read_u16le<R: Read>(r: &mut R) -> io::Result<u16> {
+    let mut buf = [0; 2];
+    r.read_exact(&mut buf)?;
+    Ok((buf[0] as u16) | ((buf[1] as u16) << 8))
+}
+
+#[test]
+fn test_read_u16le() {
+    fn expect_unexpectedeof(x: io::Result<u16>) {
+        match x {
+            Err(ref err) if err.kind() == io::ErrorKind::UnexpectedEof => (),
+            _ => panic!("expected UnexpectedEof, got {:?}", x),
+        }
+    }
+    expect_unexpectedeof(read_u16le(&mut io::Cursor::new([])));
+    expect_unexpectedeof(read_u16le(&mut io::Cursor::new([0x12])));
+    assert_eq!(0x3412, read_u16le(&mut io::Cursor::new([0x12, 0x34])).unwrap());
+    assert_eq!(0x3412, read_u16le(&mut io::Cursor::new([0x12, 0x34, 0x56, 0x78])).unwrap());
+}
 
 const MZ_SIGNATURE: u16 = 0x5a4d; // "MZ"
 
@@ -40,43 +65,24 @@ struct MZHeader {
     overlay_number: u16,
 }
 
-fn read_u16le<R: Read>(r: &mut R) -> io::Result<u16> {
-    let mut buf = [0; 2];
-    r.read_exact(&mut buf)?;
-    Ok((buf[0] as u16) | ((buf[1] as u16) << 8))
-}
-
-#[test]
-fn test_read_u16le() {
-    fn expect_unexpectedeof(x: io::Result<u16>) {
-        match x {
-            Err(ref err) if err.kind() == io::ErrorKind::UnexpectedEof => (),
-            _ => panic!("expected UnexpectedEof, got {:?}", x),
-        }
-    }
-    expect_unexpectedeof(read_u16le(&mut io::Cursor::new([])));
-    expect_unexpectedeof(read_u16le(&mut io::Cursor::new([0x12])));
-    assert_eq!(0x3412, read_u16le(&mut io::Cursor::new([0x12, 0x34])).unwrap());
-    assert_eq!(0x3412, read_u16le(&mut io::Cursor::new([0x12, 0x34, 0x56, 0x78])).unwrap());
-}
-
 fn read_mz_header<R: Read>(r: &mut R) -> io::Result<MZHeader> {
+    let mut buf = [0; 28];
+    r.read_exact(&mut buf[..])?;
     Ok(MZHeader{
-        // Assuming that these initializers are evaluated in order...
-        signature: read_u16le(r)?,
-        bytes_in_last_block: read_u16le(r)?,
-        blocks_in_file: read_u16le(r)?,
-        num_relocs: read_u16le(r)?,
-        header_paragraphs: read_u16le(r)?,
-        min_extra_paragraphs: read_u16le(r)?,
-        max_extra_paragraphs: read_u16le(r)?,
-        ss: read_u16le(r)?,
-        sp: read_u16le(r)?,
-        csum: read_u16le(r)?,
-        ip: read_u16le(r)?,
-        cs: read_u16le(r)?,
-        reloc_table_offset: read_u16le(r)?,
-        overlay_number: read_u16le(r)?,
+        signature: parse_u16le(&buf, 0),
+        bytes_in_last_block: parse_u16le(&buf, 2),
+        blocks_in_file: parse_u16le(&buf, 4),
+        num_relocs: parse_u16le(&buf, 6),
+        header_paragraphs: parse_u16le(&buf, 8),
+        min_extra_paragraphs: parse_u16le(&buf, 10),
+        max_extra_paragraphs: parse_u16le(&buf, 12),
+        ss: parse_u16le(&buf, 14),
+        sp: parse_u16le(&buf, 16),
+        csum: parse_u16le(&buf, 18),
+        ip: parse_u16le(&buf, 20),
+        cs: parse_u16le(&buf, 22),
+        reloc_table_offset: parse_u16le(&buf, 24),
+        overlay_number: parse_u16le(&buf, 26),
     })
 }
 
@@ -113,6 +119,20 @@ fn lookup_reference_stub<R: io::Read>(mut input: R) -> io::Result<Option<&'stati
         }
     }
     Ok(None)
+}
+
+struct TopLevelError {
+    path: Option<PathBuf>,
+    kind: DecompressError,
+}
+
+impl fmt::Display for TopLevelError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            &TopLevelError { path: None, ref kind } => kind.fmt(f),
+            &TopLevelError { path: Some(ref path), ref kind } => write!(f, "{}: {}", path.display(), kind),
+        }
+    }
 }
 
 fn decompress(buf: &mut [u8], mut src: usize, mut dst: usize) -> Result<(), String> {
@@ -215,7 +235,7 @@ fn decompress_format_skip_len(mut data: &mut Vec<u8>, exepack_vars_buffer: &[u8]
     };
     debug!("{:?}", exepack_header);
     if exepack_header.signature != EXEPACK_SIGNATURE {
-        return Err(DecompressError::Format(format!("bad EXEPACK signature 0x{:04x}; expected 0x{:04x}", exepack_header.signature, MZ_SIGNATURE)));
+        return Err(DecompressError::Format(format!("bad EXEPACK signature 0x{:04x}; expected 0x{:04x}", exepack_header.signature, EXEPACK_SIGNATURE)));
     }
 
     let skip_len = 16 * (exepack_header.skip_len as usize).checked_sub(1)
@@ -234,19 +254,19 @@ fn decompress_format_skip_len(mut data: &mut Vec<u8>, exepack_vars_buffer: &[u8]
     Ok(())
 }
 
-// http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK#File_Format
-fn decompress_mode<P: AsRef<Path>>(input_filename: P, _output_filename: P) -> Result<(), DecompressError> {
-    let input = File::open(&input_filename)
-        .map_err(|err| io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("{}: {}", input_filename.as_ref().display(), err)
-        ))?;
-    let mut input = io::BufReader::new(input);
+struct MZEXE {
+    header: MZHeader,
+    data: Vec<u8>,
+    // relocations
+}
 
-    let header = read_mz_header(&mut input)?;
+// Unpack an input executable and return the elements of an unpacked executable.
+fn unpack<F: Read + Seek>(input: &mut F) -> Result<MZEXE, DecompressError> {
+    let header = read_mz_header(input)
+        .map_err(|err| io::Error::new(err.kind(), format!("reading EXE header: {}", err)))?;
     debug!("{:?}", header);
     if header.signature != MZ_SIGNATURE {
-        return Err(DecompressError::Format(format!("bad MZ signature 0x{:04x}; expected 0x{:04x}", header.signature, MZ_SIGNATURE)));
+        return Err(DecompressError::Format(format!("bad EXE magic 0x{:04x}; expected 0x{:04x}", header.signature, MZ_SIGNATURE)));
     }
 
     let compdata_start = header.header_paragraphs as u64 * 16;
@@ -269,12 +289,33 @@ fn decompress_mode<P: AsRef<Path>>(input_filename: P, _output_filename: P) -> Re
     debug!("{:?}", exepack_vars_buffer);
 
     // The EXEPACK decompression stub starts at cs:ip.
-    let reference_stub = lookup_reference_stub(input);
+    let reference_stub = lookup_reference_stub(input)?;
     debug!("{:?}", reference_stub);
 
     decompress_format_skip_len(&mut compdata, &exepack_vars_buffer)?;
 
+    // relocations
+
     // check for unused trailing data
+
+    Ok(MZEXE{header: header, data: Vec::new()})
+}
+
+fn unpack_file<P: AsRef<Path>>(path: P) -> Result<MZEXE, DecompressError> {
+    let input = File::open(&path)?;
+    let mut input = io::BufReader::new(input);
+    unpack(&mut input)
+}
+
+// http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK#File_Format
+fn decompress_mode<P: AsRef<Path>>(input_path: P, _output_path: P) -> Result<(), TopLevelError> {
+    let exe = match unpack_file(&input_path) {
+        Err(err) => return Err(TopLevelError {
+            path: Some(input_path.as_ref().to_path_buf()),
+            kind: err,
+        }),
+        Ok(f) => f,
+    };
 
     Ok(())
 }
@@ -309,16 +350,16 @@ fn main() {
         eprintln!("\nNeed INPUT.EXE and OUTPUT.EXE arguments");
         process::exit(1);
     }
-    let input_filename = &matches.free[0];
-    let output_filename = &matches.free[1];
+    let input_path = &matches.free[0];
+    let output_path = &matches.free[1];
 
     if let Err(err) = if matches.opt_present("d") {
-        decompress_mode(&input_filename, &output_filename)
+        decompress_mode(&input_path, &output_path)
     } else {
         unimplemented!("compress")
     } {
         eprintln!("{}", err);
-        process::exit(match err {
+        process::exit(match err.kind {
             DecompressError::Io(_) => 1,
             // EXEPACK returns 255 on a "Packed file is corrupt" error.
             DecompressError::Format(_) => 255,
