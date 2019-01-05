@@ -9,7 +9,7 @@ use std::process;
 
 mod stubs;
 
-const MZ_SIGNATURE: u16 = 0x5a4d;
+const MZ_SIGNATURE: u16 = 0x5a4d; // "MZ"
 
 // http://www.delorie.com/djgpp/doc/exe/
 // This is a form of IMAGE_DOS_HEADER from <winnt.h>.
@@ -106,7 +106,7 @@ fn lookup_reference_stub<R: io::Read>(mut input: R) -> io::Result<Option<&'stati
     Ok(None)
 }
 
-fn decompress(buf: &mut [u8], mut src: usize) -> Result<(), String> {
+fn decompress(buf: &mut [u8], mut src: usize, mut dst: usize) -> Result<(), String> {
     // Skip 0xff padding (only up to 16 bytes of it).
     for _ in 0..16 {
         if src == 0 {
@@ -117,7 +117,6 @@ fn decompress(buf: &mut [u8], mut src: usize) -> Result<(), String> {
         }
         src -= 1;
     }
-    let mut dst = buf.len();
     loop {
         if dst < src {
             return Err("criss-cross".to_owned());
@@ -177,6 +176,55 @@ fn decompress(buf: &mut [u8], mut src: usize) -> Result<(), String> {
     Ok(())
 }
 
+const EXEPACK_SIGNATURE: u16 = 0x4252; // "RB"
+
+fn decompress_format_skip_len(mut data: &mut Vec<u8>, exepack_vars_buffer: &[u8]) -> Result<(), DecompressError> {
+    #[derive(Debug)]
+    struct EXEPACKHeader {
+        real_ip: u16,
+        real_cs: u16,
+        mem_start: u16,
+        exepack_size: u16,
+        real_sp: u16,
+        real_ss: u16,
+        dest_len: u16,
+        skip_len: u16,
+        signature: u16,
+    };
+    assert_eq!(exepack_vars_buffer.len(), 18);
+    let mut r = io::Cursor::new(exepack_vars_buffer);
+    let exepack_header = EXEPACKHeader {
+        real_ip: read_u16le(&mut r)?,
+        real_cs: read_u16le(&mut r)?,
+        mem_start: read_u16le(&mut r)?,
+        exepack_size: read_u16le(&mut r)?,
+        real_sp: read_u16le(&mut r)?,
+        real_ss: read_u16le(&mut r)?,
+        dest_len: read_u16le(&mut r)?,
+        skip_len: read_u16le(&mut r)?,
+        signature: read_u16le(&mut r)?,
+    };
+    println!("{:?}", exepack_header);
+    if exepack_header.signature != EXEPACK_SIGNATURE {
+        return Err(DecompressError::Format(format!("bad EXEPACK signature 0x{:04x}; expected 0x{:04x}", exepack_header.signature, MZ_SIGNATURE)));
+    }
+
+    let skip_len = 16 * (exepack_header.skip_len as usize).checked_sub(1)
+        .ok_or(DecompressError::Format("skip_len too small".to_owned()))?;
+    let compressed_size = data.len().checked_sub(skip_len)
+        .ok_or(DecompressError::Format("skip_len too large".to_owned()))?;
+    let uncompressed_size = (exepack_header.dest_len as usize * 16).checked_sub(skip_len)
+        .ok_or(DecompressError::Format("skip_len too large".to_owned()))?;
+    if uncompressed_size < compressed_size {
+        return Err(DecompressError::Format("dest_len too small".to_owned()));
+    }
+    data.resize(uncompressed_size, 0);
+    let res = decompress(&mut data, compressed_size, uncompressed_size);
+    println!("res {:?}", res);
+
+    Ok(())
+}
+
 // http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK#File_Format
 fn decompress_mode<P: AsRef<Path>>(input_filename: P, _output_filename: P) -> Result<(), DecompressError> {
     let input = File::open(&input_filename)
@@ -187,10 +235,10 @@ fn decompress_mode<P: AsRef<Path>>(input_filename: P, _output_filename: P) -> Re
     let mut input = io::BufReader::new(input);
 
     let header = read_mz_header(&mut input)?;
+    println!("{:?}", header);
     if header.signature != MZ_SIGNATURE {
         return Err(DecompressError::Format(format!("bad MZ signature 0x{:04x}; expected 0x{:04x}", header.signature, MZ_SIGNATURE)));
     }
-    println!("{:?}", header);
 
     let compdata_start = header.header_paragraphs as u64 * 16;
     if compdata_start < input.seek(SeekFrom::Current(0))? {
@@ -206,20 +254,16 @@ fn decompress_mode<P: AsRef<Path>>(input_filename: P, _output_filename: P) -> Re
     input.read_exact(&mut compdata)?;
 
     // The EXEPACK variables start at cs:0000 and continue up to cs:ip.
-    let mut exepack_header = Vec::new();
-    exepack_header.resize(header.ip as usize, 0);
-    input.read_exact(&mut exepack_header)?;
-    println!("{:?}", exepack_header);
+    let mut exepack_vars_buffer = Vec::new();
+    exepack_vars_buffer.resize(header.ip as usize, 0);
+    input.read_exact(&mut exepack_vars_buffer)?;
+    println!("{:?}", exepack_vars_buffer);
 
     // The EXEPACK decompression stub starts at cs:ip.
     let reference_stub = lookup_reference_stub(input);
     println!("{:?}", reference_stub);
 
-    let size = compdata.len();
-    compdata.resize(81504, 0);
-    // compdata.resize(96976, 0);
-    let res = decompress(&mut compdata, size);
-    println!("res {:?}", res);
+    decompress_format_skip_len(&mut compdata, &exepack_vars_buffer)?;
 
     // check for unused trailing data
 
