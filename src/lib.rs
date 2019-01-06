@@ -399,11 +399,12 @@ fn read_up_to<R: Read>(r: &mut R, buf: &mut [u8]) -> io::Result<usize> {
 fn read_stub<R: Read>(r: &mut R) -> io::Result<(Vec<u8>, Option<bool>)> {
     // Mapping of known stubs to whether they use skip_len. Needs to be sorted
     // by length.
-    const KNOWN_STUBS: [(&[u8], bool); 4] = [
+    const KNOWN_STUBS: [(&[u8], bool); 5] = [
         (stubs::STUB_258, false),
         (stubs::STUB_277, false),
         (stubs::STUB_279, false),
         (stubs::STUB_283, true),
+        (stubs::STUB_290, false),
     ];
     let mut stub = Vec::new();
     for &(known_stub, uses_skip_len) in KNOWN_STUBS.iter() {
