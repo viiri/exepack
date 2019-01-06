@@ -21,8 +21,10 @@ macro_rules! debug {
     };
 }
 
-fn parse_u16le(buf: &[u8], i: usize) -> u16 {
-    (buf[i] as u16) | ((buf[i+1] as u16) << 8)
+fn read_u16le<R: Read>(r: &mut R) -> io::Result<u16> {
+    let mut buf = [0; 2];
+    r.read_exact(&mut buf)?;
+    Ok((buf[0] as u16) | ((buf[1] as u16) << 8))
 }
 
 fn write_u16le<W: Write>(w: &mut W, v: u16) -> io::Result<usize> {
@@ -57,7 +59,7 @@ const EXE_HEADER_LEN: u64 = 28;
 struct EXE {
     header: EXEHeader,
     data: Vec<u8>,
-    // relocations
+    relocations: Vec<Relocation>,
 }
 
 // http://www.delorie.com/djgpp/doc/exe/
@@ -80,24 +82,28 @@ struct EXEHeader {
     overlay_number: u16,
 }
 
+#[derive(Debug)]
+struct Relocation {
+    segment: u16,
+    offset: u16,
+}
+
 fn read_exe_header<R: Read>(r: &mut R) -> io::Result<EXEHeader> {
-    let mut buf = [0; EXE_HEADER_LEN as usize];
-    r.read_exact(&mut buf[..])?;
     Ok(EXEHeader{
-        signature: parse_u16le(&buf, 0),
-        bytes_in_last_block: parse_u16le(&buf, 2),
-        blocks_in_file: parse_u16le(&buf, 4),
-        num_relocs: parse_u16le(&buf, 6),
-        header_paragraphs: parse_u16le(&buf, 8),
-        min_extra_paragraphs: parse_u16le(&buf, 10),
-        max_extra_paragraphs: parse_u16le(&buf, 12),
-        ss: parse_u16le(&buf, 14),
-        sp: parse_u16le(&buf, 16),
-        csum: parse_u16le(&buf, 18),
-        ip: parse_u16le(&buf, 20),
-        cs: parse_u16le(&buf, 22),
-        reloc_table_offset: parse_u16le(&buf, 24),
-        overlay_number: parse_u16le(&buf, 26),
+        signature: read_u16le(r)?,
+        bytes_in_last_block: read_u16le(r)?,
+        blocks_in_file: read_u16le(r)?,
+        num_relocs: read_u16le(r)?,
+        header_paragraphs: read_u16le(r)?,
+        min_extra_paragraphs: read_u16le(r)?,
+        max_extra_paragraphs: read_u16le(r)?,
+        ss: read_u16le(r)?,
+        sp: read_u16le(r)?,
+        csum: read_u16le(r)?,
+        ip: read_u16le(r)?,
+        cs: read_u16le(r)?,
+        reloc_table_offset: read_u16le(r)?,
+        overlay_number: read_u16le(r)?,
     })
 }
 
@@ -159,6 +165,7 @@ enum EXEPACKFormatError {
     CopyOverflow(usize, usize, u8, usize),
     BogusCommand(usize, u8, usize),
     Gap(usize, usize),
+    TooManyRelocations(usize),
 }
 
 impl fmt::Display for EXEPACKFormatError {
@@ -190,6 +197,8 @@ impl fmt::Display for EXEPACKFormatError {
                 write!(f, "unknown command 0x{:02x} with ostensible length {} at index {}", command, length, src),
             &EXEPACKFormatError::Gap(dst, original_src) =>
                 write!(f, "decompression left a gap of {} unwritten bytes between write index {} and original read index {}", dst - original_src, dst, original_src),
+            &EXEPACKFormatError::TooManyRelocations(num_relocations) =>
+                write!(f, "too many relocation entries ({}) to represent in an EXE header", num_relocations),
         }
     }
 }
@@ -326,36 +335,35 @@ struct EXEPACKHeader {
 }
 
 fn parse_exepack_header(buf: &[u8], uses_skip_len: bool) -> Result<EXEPACKHeader, EXEPACKFormatError> {
-    Ok(if !uses_skip_len {
-        if buf.len() != 16 {
-            return Err(EXEPACKFormatError::HeaderSizeMismatch(buf.to_vec(), 16));
-        }
-        EXEPACKHeader {
-            real_ip: parse_u16le(&buf, 0),
-            real_cs: parse_u16le(&buf, 2),
-            // Ignore "mem_start".
-            exepack_size: parse_u16le(&buf, 6),
-            real_sp: parse_u16le(&buf, 8),
-            real_ss: parse_u16le(&buf, 10),
-            dest_len: parse_u16le(&buf, 12),
-            skip_len: 1,
-            signature: parse_u16le(&buf, 14),
-        }
+    let mut r = io::Cursor::new(buf);
+    if !uses_skip_len && buf.len() != 16 {
+        return Err(EXEPACKFormatError::HeaderSizeMismatch(buf.to_vec(), 16));
+    }
+    if uses_skip_len && buf.len() != 18 {
+        return Err(EXEPACKFormatError::HeaderSizeMismatch(buf.to_vec(), 18));
+    }
+    let real_ip = read_u16le(&mut r).unwrap();
+    let real_cs = read_u16le(&mut r).unwrap();
+    let _ = read_u16le(&mut r).unwrap(); // Ignore "mem_start".
+    let exepack_size = read_u16le(&mut r).unwrap();
+    let real_sp = read_u16le(&mut r).unwrap();
+    let real_ss = read_u16le(&mut r).unwrap();
+    let dest_len = read_u16le(&mut r).unwrap();
+    let skip_len = if uses_skip_len {
+        read_u16le(&mut r).unwrap()
     } else {
-        if buf.len() != 18 {
-            return Err(EXEPACKFormatError::HeaderSizeMismatch(buf.to_vec(), 18));
-        }
-        EXEPACKHeader {
-            real_ip: parse_u16le(&buf, 0),
-            real_cs: parse_u16le(&buf, 2),
-            // Ignore "mem_start".
-            exepack_size: parse_u16le(&buf, 6),
-            real_sp: parse_u16le(&buf, 8),
-            real_ss: parse_u16le(&buf, 10),
-            dest_len: parse_u16le(&buf, 12),
-            skip_len: parse_u16le(&buf, 14),
-            signature: parse_u16le(&buf, 16),
-        }
+        1
+    };
+    let signature = read_u16le(&mut r).unwrap();
+    Ok(EXEPACKHeader {
+        real_ip,
+        real_cs,
+        exepack_size,
+        real_sp,
+        real_ss,
+        dest_len,
+        skip_len,
+        signature,
     })
 }
 
@@ -414,6 +422,21 @@ fn read_stub<R: Read>(r: &mut R) -> io::Result<(Vec<u8>, Option<bool>)> {
         }
     }
     return Ok((stub, None))
+}
+
+fn read_relocations<R: Read>(r: &mut R) -> io::Result<Vec<Relocation>> {
+    let mut relocations = Vec::new();
+    for i in 0..16 {
+        let num_relocations = read_u16le(r)?;
+        for _ in 0..num_relocations {
+            let offset = read_u16le(r)?;
+            relocations.push(Relocation {
+                segment: i * 0x1000,
+                offset,
+            });
+        }
+    }
+    Ok(relocations)
 }
 
 // Unpack an input executable and return the elements of an unpacked executable.
@@ -540,19 +563,30 @@ fn unpack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE, Dec
     // Now let's actually decompress the buffer.
     decompress(&mut work_buffer, uncompressed_len, compressed_len)?;
 
-    // relocations
+    // The last step is to parse the relocation table that follows the
+    // decompression stub.
+    let relocations = read_relocations(&mut input)?;
+    debug!("{:?}", relocations);
 
     // It's not an error if there is trailing data here (i.e., if
     // exepack_header.exepack_size is larger than it needs to be). Any trailing data
     // would be ignored by the EXEPACK decompression stub.
 
-    let (bytes_in_last_block, blocks_in_file) = encode_exe_len(32*16 + uncompressed_len);
+    // Finally, construct a new EXE.
+    // Pad the header to the smallest multiple of 512 bytes that holds both the
+    // EXEHeader struct and all the relocations (each relocation is 4 bytes).
+    let num_header_pages = ((EXE_HEADER_LEN as usize + 4 * relocations.len()) + 511) / 512;
+    let (bytes_in_last_block, blocks_in_file) = encode_exe_len(num_header_pages * 512 + uncompressed_len);
     let new_exe_header = EXEHeader{
         signature: EXE_MAGIC,
         bytes_in_last_block: bytes_in_last_block,
         blocks_in_file: blocks_in_file,
-        num_relocs: 0,
-        header_paragraphs: 32,
+        num_relocs: if relocations.len() > 0xffff {
+            return Err(DecompressError::EXEPACK(EXEPACKFormatError::TooManyRelocations(relocations.len())))
+        } else {
+            relocations.len() as u16
+        },
+        header_paragraphs: (num_header_pages * 512 / 16) as u16,
         min_extra_paragraphs: exe_header.min_extra_paragraphs,
         max_extra_paragraphs: exe_header.max_extra_paragraphs,
         ss: exepack_header.real_ss,
@@ -564,8 +598,7 @@ fn unpack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE, Dec
         overlay_number: 0,
     };
     debug!("{:?}", new_exe_header);
-
-    Ok(EXE{header: new_exe_header, data: work_buffer})
+    Ok(EXE{header: new_exe_header, data: work_buffer, relocations})
 }
 
 fn unpack_file<P: AsRef<Path>>(path: P) -> Result<EXE, DecompressError> {
@@ -596,6 +629,15 @@ fn write_exe_header<W: Write>(w: &mut W, header: &EXEHeader) -> io::Result<usize
 fn write_exe<W: Write>(w: &mut W, exe: &EXE) -> io::Result<usize> {
     let mut n = 0;
     n += write_exe_header(w, &exe.header)?;
+    for relocation in exe.relocations.iter() {
+        n += write_u16le(w, relocation.offset)?;
+        n += write_u16le(w, relocation.segment)?;
+    }
+    // http://www.delorie.com/djgpp/doc/exe/: "Note that some OSs and/or
+    // programs may fail if the header is not a multiple of 512 bytes." The
+    // unpack function has already added the necessary amounts to
+    // bytes_in_last_block and blocks_in_file, expecting us to do this padding
+    // here.
     while n % 512 != 0 {
         let zeroes = [0; 16];
         n += w.write(&zeroes[0..cmp::min(512 - n%512, zeroes.len())])?;
@@ -636,6 +678,8 @@ fn decompress_mode<P: AsRef<Path>>(input_path: P, output_path: P) -> Result<(), 
 
 const EXEPACK_ERRMSG: &[u8] = b"Packed file is corrupt";
 
+// Return whether the given slice contains EXEPACK_ERRMSG, and is therefore
+// likely an EXEPACK decompression stub.
 fn stub_resembles_exepack(stub: &[u8]) -> bool {
     // No equivalent of str::contains for &[u8]...
     for i in 0.. {
