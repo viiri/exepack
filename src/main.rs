@@ -66,20 +66,20 @@ struct EXE {
 // This is a form of IMAGE_DOS_HEADER from <winnt.h>.
 #[derive(Debug)]
 struct EXEHeader {
-    signature: u16,
-    bytes_in_last_block: u16,
-    blocks_in_file: u16,
-    num_relocs: u16,
-    header_paragraphs: u16,
-    min_extra_paragraphs: u16,
-    max_extra_paragraphs: u16,
-    ss: u16,
-    sp: u16,
-    csum: u16,
-    ip: u16,
-    cs: u16,
-    reloc_table_offset: u16,
-    overlay_number: u16,
+    e_magic: u16,
+    e_cblp: u16,
+    e_cp: u16,
+    e_crlc: u16,
+    e_cparhdr: u16,
+    e_minalloc: u16,
+    e_maxalloc: u16,
+    e_ss: u16,
+    e_sp: u16,
+    e_csum: u16,
+    e_ip: u16,
+    e_cs: u16,
+    e_lfarlc: u16,
+    e_ovno: u16,
 }
 
 #[derive(Debug)]
@@ -90,20 +90,20 @@ struct Relocation {
 
 fn read_exe_header<R: Read>(r: &mut R) -> io::Result<EXEHeader> {
     Ok(EXEHeader{
-        signature: read_u16le(r)?,
-        bytes_in_last_block: read_u16le(r)?,
-        blocks_in_file: read_u16le(r)?,
-        num_relocs: read_u16le(r)?,
-        header_paragraphs: read_u16le(r)?,
-        min_extra_paragraphs: read_u16le(r)?,
-        max_extra_paragraphs: read_u16le(r)?,
-        ss: read_u16le(r)?,
-        sp: read_u16le(r)?,
-        csum: read_u16le(r)?,
-        ip: read_u16le(r)?,
-        cs: read_u16le(r)?,
-        reloc_table_offset: read_u16le(r)?,
-        overlay_number: read_u16le(r)?,
+        e_magic: read_u16le(r)?,
+        e_cblp: read_u16le(r)?,
+        e_cp: read_u16le(r)?,
+        e_crlc: read_u16le(r)?,
+        e_cparhdr: read_u16le(r)?,
+        e_minalloc: read_u16le(r)?,
+        e_maxalloc: read_u16le(r)?,
+        e_ss: read_u16le(r)?,
+        e_sp: read_u16le(r)?,
+        e_csum: read_u16le(r)?,
+        e_ip: read_u16le(r)?,
+        e_cs: read_u16le(r)?,
+        e_lfarlc: read_u16le(r)?,
+        e_ovno: read_u16le(r)?,
     })
 }
 
@@ -111,12 +111,12 @@ fn read_exe_header<R: Read>(r: &mut R) -> io::Result<EXEHeader> {
 // so-named EXE header fields. Panics if the size is too large to be
 // represented (> 0x1fffe00).
 fn encode_exe_len(len: usize) -> (u16, u16) {
-    let blocks_in_file = (len + 511) / 512;
-    if blocks_in_file > 0xffff {
+    let e_cp = (len + 511) / 512;
+    if e_cp > 0xffff {
         panic!("cannot represent the length {}", len);
     }
-    let bytes_in_last_block = len % 512;
-    (bytes_in_last_block as u16, blocks_in_file as u16)
+    let e_cblp = len % 512;
+    (e_cblp as u16, e_cp as u16)
 }
 
 #[test]
@@ -451,25 +451,25 @@ fn unpack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE, Dec
     debug!("{:?}", exe_header);
 
     // Begin consistency tests on the fields of the EXE header.
-    if exe_header.signature != EXE_MAGIC {
-        return Err(DecompressError::EXE(EXEFormatError::BadMagic(exe_header.signature)));
+    if exe_header.e_magic != EXE_MAGIC {
+        return Err(DecompressError::EXE(EXEFormatError::BadMagic(exe_header.e_magic)));
     }
 
     // Consistency of e_cparhdr. We need the stated header length to be at least
     // as large as the header we just read.
-    let exe_header_len = exe_header.header_paragraphs as u64 * 16;
+    let exe_header_len = exe_header.e_cparhdr as u64 * 16;
     if exe_header_len < EXE_HEADER_LEN {
-        return Err(DecompressError::EXE(EXEFormatError::HeaderTooShort(exe_header.header_paragraphs)));
+        return Err(DecompressError::EXE(EXEFormatError::HeaderTooShort(exe_header.e_cparhdr)));
     }
 
     // Consistency of e_cp and e_cblp.
-    if exe_header.blocks_in_file == 0 || exe_header.bytes_in_last_block >= 512 {
-        return Err(DecompressError::EXE(EXEFormatError::BadNumPages(exe_header.blocks_in_file, exe_header.bytes_in_last_block)));
+    if exe_header.e_cp == 0 || exe_header.e_cblp >= 512 {
+        return Err(DecompressError::EXE(EXEFormatError::BadNumPages(exe_header.e_cp, exe_header.e_cblp)));
     }
-    let exe_len = (exe_header.blocks_in_file - 1) as u64 * 512
-        + if exe_header.bytes_in_last_block == 0 { 512 } else { exe_header.bytes_in_last_block } as u64;
+    let exe_len = (exe_header.e_cp - 1) as u64 * 512
+        + if exe_header.e_cblp == 0 { 512 } else { exe_header.e_cblp } as u64;
     if exe_len < exe_header_len {
-        return Err(DecompressError::EXE(EXEFormatError::BadNumPages(exe_header.blocks_in_file, exe_header.bytes_in_last_block)));
+        return Err(DecompressError::EXE(EXEFormatError::BadNumPages(exe_header.e_cp, exe_header.e_cblp)));
     }
     if let Some(file_len) = file_len_hint {
         // The EXE file length is allowed to be smaller than the length of the
@@ -491,14 +491,14 @@ fn unpack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE, Dec
     // cs:0000. We will decompress into the very same buffer (after expanding
     // it).
     let mut work_buffer = Vec::new();
-    work_buffer.resize(exe_header.cs as usize * 16, 0);
+    work_buffer.resize(exe_header.e_cs as usize * 16, 0);
     input.read_exact(&mut work_buffer)?;
 
     // The EXEPACK header starts at cs:0000 and ends at cs:ip. We won't know the
     // layout of the EXEPACK header (i.e., whether there is a skip_len member)
     // until after we have read and identified the decompression stub.
     let mut exepack_header_buffer = Vec::new();
-    exepack_header_buffer.resize(exe_header.ip as usize, 0);
+    exepack_header_buffer.resize(exe_header.e_ip as usize, 0);
     input.read_exact(&mut exepack_header_buffer)?;
 
     // The decompression stub starts at cs:ip. We incrementally read with
@@ -576,26 +576,26 @@ fn unpack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE, Dec
     // Pad the header to the smallest multiple of 512 bytes that holds both the
     // EXEHeader struct and all the relocations (each relocation is 4 bytes).
     let num_header_pages = ((EXE_HEADER_LEN as usize + 4 * relocations.len()) + 511) / 512;
-    let (bytes_in_last_block, blocks_in_file) = encode_exe_len(num_header_pages * 512 + uncompressed_len);
+    let (e_cblp, e_cp) = encode_exe_len(num_header_pages * 512 + uncompressed_len);
     let new_exe_header = EXEHeader{
-        signature: EXE_MAGIC,
-        bytes_in_last_block: bytes_in_last_block,
-        blocks_in_file: blocks_in_file,
-        num_relocs: if relocations.len() > 0xffff {
+        e_magic: EXE_MAGIC,
+        e_cblp: e_cblp,
+        e_cp: e_cp,
+        e_crlc: if relocations.len() > 0xffff {
             return Err(DecompressError::EXEPACK(EXEPACKFormatError::TooManyRelocations(relocations.len())))
         } else {
             relocations.len() as u16
         },
-        header_paragraphs: (num_header_pages * 512 / 16) as u16,
-        min_extra_paragraphs: exe_header.min_extra_paragraphs,
-        max_extra_paragraphs: exe_header.max_extra_paragraphs,
-        ss: exepack_header.real_ss,
-        sp: exepack_header.real_sp,
-        csum: 0,
-        ip: exepack_header.real_ip,
-        cs: exepack_header.real_cs,
-        reloc_table_offset: EXE_HEADER_LEN as u16,
-        overlay_number: 0,
+        e_cparhdr: (num_header_pages * 512 / 16) as u16,
+        e_minalloc: exe_header.e_minalloc,
+        e_maxalloc: exe_header.e_maxalloc,
+        e_ss: exepack_header.real_ss,
+        e_sp: exepack_header.real_sp,
+        e_csum: 0,
+        e_ip: exepack_header.real_ip,
+        e_cs: exepack_header.real_cs,
+        e_lfarlc: EXE_HEADER_LEN as u16,
+        e_ovno: 0,
     };
     debug!("{:?}", new_exe_header);
     Ok(EXE{header: new_exe_header, data: work_buffer, relocations})
@@ -609,20 +609,20 @@ fn unpack_file<P: AsRef<Path>>(path: P) -> Result<EXE, DecompressError> {
 
 fn write_exe_header<W: Write>(w: &mut W, header: &EXEHeader) -> io::Result<usize> {
     let mut n = 0;
-    n += write_u16le(w, header.signature)?;
-    n += write_u16le(w, header.bytes_in_last_block)?;
-    n += write_u16le(w, header.blocks_in_file)?;
-    n += write_u16le(w, header.num_relocs)?;
-    n += write_u16le(w, header.header_paragraphs)?;
-    n += write_u16le(w, header.min_extra_paragraphs)?;
-    n += write_u16le(w, header.max_extra_paragraphs)?;
-    n += write_u16le(w, header.ss)?;
-    n += write_u16le(w, header.sp)?;
-    n += write_u16le(w, header.csum)?;
-    n += write_u16le(w, header.ip)?;
-    n += write_u16le(w, header.cs)?;
-    n += write_u16le(w, header.reloc_table_offset)?;
-    n += write_u16le(w, header.overlay_number)?;
+    n += write_u16le(w, header.e_magic)?;
+    n += write_u16le(w, header.e_cblp)?;
+    n += write_u16le(w, header.e_cp)?;
+    n += write_u16le(w, header.e_crlc)?;
+    n += write_u16le(w, header.e_cparhdr)?;
+    n += write_u16le(w, header.e_minalloc)?;
+    n += write_u16le(w, header.e_maxalloc)?;
+    n += write_u16le(w, header.e_ss)?;
+    n += write_u16le(w, header.e_sp)?;
+    n += write_u16le(w, header.e_csum)?;
+    n += write_u16le(w, header.e_ip)?;
+    n += write_u16le(w, header.e_cs)?;
+    n += write_u16le(w, header.e_lfarlc)?;
+    n += write_u16le(w, header.e_ovno)?;
     Ok(n)
 }
 
@@ -635,9 +635,8 @@ fn write_exe<W: Write>(w: &mut W, exe: &EXE) -> io::Result<usize> {
     }
     // http://www.delorie.com/djgpp/doc/exe/: "Note that some OSs and/or
     // programs may fail if the header is not a multiple of 512 bytes." The
-    // unpack function has already added the necessary amounts to
-    // bytes_in_last_block and blocks_in_file, expecting us to do this padding
-    // here.
+    // unpack function has already added the necessary amounts to e_cblp and
+    // e_cp, expecting us to do this padding here.
     while n % 512 != 0 {
         let zeroes = [0; 16];
         n += w.write(&zeroes[0..cmp::min(512 - n%512, zeroes.len())])?;
