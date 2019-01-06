@@ -245,6 +245,7 @@ pub const STUB_283: &'static [u8] = b"\
 /// Sample:
 ///
 /// - <https://archive.org/download/TheAdventuresOfCaptainComic/AdventuresOfCaptainComicEpisode1The-PlanetOfDeathsw1988michaelA.Denioaction.zip/COMIC.EXE>
+///
 /// NASM source code to make an equivalent of this stub:
 ///
 /// ```nasm,ignore
@@ -433,7 +434,7 @@ pub const STUB_283: &'static [u8] = b"\
 /// <https://web.archive.org/web/20170115043824/http://www.microsoft.com/security/portal/blog-images/a/exepack.png>.)
 /// The right-hand side shows how the code is hotpatched to remove pointer
 /// underflow and reliance on specific address wrapping behavior. It still has
-/// the built-in assumption that skip_len == 1.
+/// the built-in assumption that `skip_len` = 1.
 ///
 /// ```nasm,ignore
 /// BITS 16

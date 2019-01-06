@@ -1,10 +1,41 @@
+//! Compressor and decompressor for self-extracting DOS executables with
+//! Microsoft EXEPACK.
+//!
+//! There are different versions of the EXEPACK format, with slightly internal
+//! data structures. This program identifies what format is in used by looking
+//! up the executable portion of the file (the "decompression stub") in a table
+//! of known stubs. See the `stubs` module. If the program doesn't recognize a
+//! stub, it can't decompress it.
+//!
+//! One common format is documented at
+//! <http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK#File_Format>.
+//! As of 2019-01-06, that page omits the detail that (`skip_len` - 1) must be
+//! subtracted from the destination address as well as the source address—though
+//! in practice it doesn't really matter because all the examples I've seen have
+//! `skip_len` = 1, so the subtraction is a no-op. The format described at that
+//! page is compatible with what is here called `stubs::STUB_283`. Another
+//! format omits the `skip_len` variable completely (changing the size of the
+//! EXEPACK header) and hardcodes an implicit `skip_len` = 1; see
+//! `stubs::STUB_258`.
+//!
+//! # Compression
+//!
+//! Not implemented.
+//!
+//! # Decompression
+//!
+//! The `unpack` function takes an `io::Read` and outputs a decompressed `EXE`
+//! struct. The `write_exe` function takes an `EXE` struct and writes it to an
+//! `io::Write`.
+
 use std::cmp;
 use std::fmt;
 use std::io::{self, Read, Write};
 use std::sync::atomic;
 
-mod stubs;
+pub mod stubs;
 
+/// If `DEBUG` is true, the library will print debugging information to stderr.
 pub static DEBUG: atomic::AtomicBool = atomic::AtomicBool::new(false);
 
 macro_rules! debug {
@@ -85,9 +116,9 @@ fn read_exe_header<R: Read>(r: &mut R) -> io::Result<EXEHeader> {
     })
 }
 
-// Return a tuple (e_cblp, e_cp) that encodes len as appropriate for the
-// so-named EXE header fields. Panics if the size is too large to be
-// represented (> 0x1fffe00).
+/// Return a tuple `(e_cblp, e_cp)` that encodes len as appropriate for the
+/// so-named EXE header fields. Panics if the size is too large to be
+/// represented (> 0x1fffe00).
 fn encode_exe_len(len: usize) -> (u16, u16) {
     let e_cp = (len + 511) / 512;
     if e_cp > 0xffff {
@@ -220,9 +251,11 @@ impl fmt::Display for Error {
     }
 }
 
-// The basic decompression loop. The compressed data are read (going backwards)
-// starting at src, and written (also going backwards) back to the same buffer
-// starting at dst.
+/// The basic decompression loop. The compressed data are read (going backwards)
+/// starting at `src`, and written (also going backwards) back to the same buffer
+/// starting at `dst`.
+///
+/// http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK#Decompression_algorithm
 fn decompress(buf: &mut [u8], mut dst: usize, mut src: usize) -> Result<(), EXEPACKFormatError> {
     let original_src = src;
     // Skip 0xff padding (only up to 16 bytes of it).
@@ -331,7 +364,7 @@ fn parse_exepack_header(buf: &[u8], uses_skip_len: bool) -> Result<EXEPACKHeader
     })
 }
 
-// Discard a certain number of bytes from an io::BufRead.
+/// Discard a certain number of bytes from an `io::BufRead`.
 fn discard<R: io::BufRead>(br: &mut R, mut n: u64) -> io::Result<()> {
     while n > 0 {
         let len = {
@@ -344,8 +377,8 @@ fn discard<R: io::BufRead>(br: &mut R, mut n: u64) -> io::Result<()> {
     Ok(())
 }
 
-// Like io::Read::read_exact, except that it returns the number of bytes read
-// instead of io::ErrorKind::UnexpectedEof when it reaches EOF.
+/// Like `io::Read::read_exact`, except that it returns the number of bytes read
+/// instead of `io::ErrorKind::UnexpectedEof` when it reaches EOF.
 fn read_up_to<R: Read>(r: &mut R, buf: &mut [u8]) -> io::Result<usize> {
     let mut total = 0;
     while total < buf.len() {
@@ -358,11 +391,11 @@ fn read_up_to<R: Read>(r: &mut R, buf: &mut [u8]) -> io::Result<usize> {
     Ok(total)
 }
 
-// Read a decompression stub and return both the stub and a boolean indicating
-// whether the EXEPACK format that the stub implements uses an explicit skip_len
-// variable or not. It works by incrementally reading and comparing against a
-// table of known stubs. In the event that there is no match, returns whatever
-// we have read so far along with None for the skip_len indicator.
+/// Read a decompression stub and return both the stub and a boolean indicating
+/// whether the EXEPACK format that the stub implements uses an explicit
+/// skip_len variable or not. It works by incrementally reading and comparing
+/// against a table of known stubs. In the event that there is no match, returns
+/// whatever we have read so far along with `None` for the `skip_len` indicator.
 fn read_stub<R: Read>(r: &mut R) -> io::Result<(Vec<u8>, Option<bool>)> {
     // Mapping of known stubs to whether they use skip_len. Needs to be sorted
     // by length.
@@ -388,6 +421,7 @@ fn read_stub<R: Read>(r: &mut R) -> io::Result<(Vec<u8>, Option<bool>)> {
     return Ok((stub, None))
 }
 
+// http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK#Relocation_Table
 fn read_relocations<R: Read>(r: &mut R) -> io::Result<Vec<Relocation>> {
     let mut relocations = Vec::new();
     for i in 0..16 {
@@ -403,10 +437,10 @@ fn read_relocations<R: Read>(r: &mut R) -> io::Result<Vec<Relocation>> {
     Ok(relocations)
 }
 
-// Unpack an input executable and return the elements of an unpacked executable.
-// file_size_hint is an optional externally provided hint of the file's total
-// length, which we use to emit a warning when it exceeds the length stated in
-// the EXE header.
+/// Unpack an input executable and return the elements of an unpacked executable.
+/// `file_len_hint` is an optional externally provided hint of the file's total
+/// length, which we use to emit a warning when it exceeds the length stated in
+/// the EXE header.
 pub fn unpack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE, Error> {
     let mut input = io::BufReader::new(input);
 
@@ -584,6 +618,7 @@ fn write_exe_header<W: Write>(w: &mut W, header: &EXEHeader) -> io::Result<usize
     Ok(n)
 }
 
+/// Serialize an `EXE` structure to `w`. Returns the number of bytes written.
 pub fn write_exe<W: Write>(w: &mut W, exe: &EXE) -> io::Result<usize> {
     let mut n = 0;
     n += write_exe_header(w, &exe.header)?;

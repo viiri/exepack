@@ -1,3 +1,25 @@
+//! exepack does compression and decompression of DOS executables with Microsoft
+//! EXEPACK.
+//!
+//! For information about the format, see
+//! <http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK>.
+//!
+//! # Compression
+//!
+//! Not implemented.
+//!
+//! # Decompression
+//!
+//! ```ignore
+//! exepack -d input.exe output.exe
+//! ```
+//!
+//! # Exit status
+//!
+//! For errors that occur while parsing or decompressing the EXEPACK layer,
+//! exits with status 255. For other errors (I/O, EXE parsing), exits with
+//! status 1.
+
 extern crate exepack;
 extern crate getopts;
 
@@ -5,9 +27,9 @@ use std::env;
 use std::fmt;
 use std::fs::File;
 use std::io::{self, Write};
-use std::str;
 use std::path::{Path, PathBuf};
 use std::process;
+use std::str;
 use std::sync::atomic;
 
 struct TopLevelError {
@@ -38,7 +60,6 @@ fn write_exe_file<P: AsRef<Path>>(path: P, exe: &exepack::EXE) -> io::Result<usi
     Ok(n)
 }
 
-// http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK#File_Format
 fn decompress_mode<P: AsRef<Path>>(input_path: P, output_path: P) -> Result<(), TopLevelError> {
     let exe = match unpack_file(&input_path) {
         Err(err) => return Err(TopLevelError {
@@ -124,7 +145,6 @@ fn display_unknown_stub<W: Write>(
 ) -> io::Result<()> {
     if stub_resembles_exepack(stub) {
         write!(w, "\
-\n\
 The input contains {:?}, but does not match a\n\
 format that this program knows about. Please send the below listing to\n\
 \tdavid@bamsoftware.com\n\
@@ -136,7 +156,6 @@ version can support it.\n\
         write_escaped_stub_for_submission(w, exepack_header_buffer, stub)?;
     } else {
         write!(w, "\
-\n\
 The input does not contain {:?} within the first\n\
 page of code. Is it really EXEPACK?\n",
             str::from_utf8(EXEPACK_ERRMSG).unwrap()
@@ -188,17 +207,23 @@ fn main() {
     } else {
         unimplemented!("compress")
     } {
-        eprintln!("{}", err);
-        if let exepack::Error::EXEPACK(exepack::EXEPACKFormatError::UnknownStub(ref exepack_header_buffer, ref stub)) = err.kind {
-            // UnknownStub gets special treatment. We search for "Packed
-            // file is corrupt" and display the stub if it is found, or warn
-            // that the input may not be EXEPACK if it is not.
-            display_unknown_stub(&mut io::stderr(), &exepack_header_buffer, &stub).unwrap();
+        match err.kind {
+            exepack::Error::EXEPACK(exepack::EXEPACKFormatError::UnknownStub(ref exepack_header_buffer, ref stub)) => {
+                // UnknownStub gets special treatment. We search for "Packed
+                // file is corrupt" and display the stub if it is found, or warn
+                // that the input may not be EXEPACK if it is not.
+                eprintln!("{}", err);
+                eprintln!();
+                display_unknown_stub(&mut io::stderr(), &exepack_header_buffer, &stub).unwrap();
+            }
+            exepack::Error::EXEPACK(_) => eprintln!("Packed file is corrupt: {}", err),
+            _ => eprintln!("{}", err),
         }
         process::exit(match err.kind {
-            exepack::Error::Io(_) | exepack::Error::EXE(_) => 1,
             // EXEPACK returns 255 on a "Packed file is corrupt" error.
             exepack::Error::EXEPACK(_) => 255,
+            // Other errors get exit status 1.
+            _ => 1,
         });
     }
 }
