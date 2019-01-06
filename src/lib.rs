@@ -16,7 +16,7 @@
 //! page is compatible with what is here called `stubs::STUB_283`. Another
 //! format omits the `skip_len` variable completely (changing the size of the
 //! EXEPACK header) and hardcodes an implicit `skip_len` = 1; see
-//! `stubs::STUB_258`.
+//! `stubs::STUB_258` for example.
 //!
 //! # Compression
 //!
@@ -399,8 +399,9 @@ fn read_up_to<R: Read>(r: &mut R, buf: &mut [u8]) -> io::Result<usize> {
 fn read_stub<R: Read>(r: &mut R) -> io::Result<(Vec<u8>, Option<bool>)> {
     // Mapping of known stubs to whether they use skip_len. Needs to be sorted
     // by length.
-    const KNOWN_STUBS: [(&[u8], bool); 2] = [
+    const KNOWN_STUBS: [(&[u8], bool); 3] = [
         (stubs::STUB_258, false),
+        (stubs::STUB_279, false),
         (stubs::STUB_283, true),
     ];
     let mut stub = Vec::new();
