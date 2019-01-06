@@ -10,3 +10,10 @@ https://hackaday.com/2018/05/14/msdos-development-with-gcc/
 http://nullprogram.com/blog/2014/12/09/
 https://www.youtube.com/watch?v=Y7vU5T6rKHE
 https://www.youtube.com/watch?v=EXiF7g8Hmt4
+
+
+== Different versions of EXEPACK
+
+https://github.com/w4kfu/unEXEPACK/issues/3
+https://github.com/horsicq/Detect-It-Easy/blob/master/db/MSDOS/EXEPACK.2.sg
+https://github.com/horsicq/Detect-It-Easy/blob/master/db/MSDOS/WordPerfect%20EXEPack.2.sg
