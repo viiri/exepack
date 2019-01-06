@@ -27,6 +27,17 @@
 //! The `unpack` function takes an `io::Read` and outputs a decompressed `EXE`
 //! struct. The `write_exe` function takes an `EXE` struct and writes it to an
 //! `io::Write`.
+//!
+//! # Inconsistencies
+//!
+//! Doesn't try to be bug-compatible will all versions of EXEPACK. Known
+//! differences:
+//!
+//! - Some versions of EXEPACK have a bug when the offset of a segment:offset
+//!   relocation entry is 0xffff: they write the second byte at address 0 in the
+//!   same segment rather than the following segment.
+//! - Some versions of EXEPACK don't restore the ax register before jumping to
+//!   the decompressed program.
 
 use std::cmp;
 use std::fmt;

@@ -78,6 +78,7 @@
 /// .loop:
 ///         mov cl, 4
 ///         ; adjust ds:si so that si is as high as possible in the segment (without changing the address pointed to)
+///         ; because lengths can be as large as 0xffff and "rep movsb" may wrap around the segment
 ///         mov ax, si
 ///         not ax
 ///         shr ax, cl
@@ -305,6 +306,7 @@ pub const STUB_283: &'static [u8] = b"\
 /// .loop:
 ///         mov cl, 4
 ///         ; adjust ds:si so that si is as high as possible in the segment (without changing the address pointed to)
+///         ; because lengths can be as large as 0xffff and "rep movsb" may wrap around the segment
 ///         mov ax, si
 ///         not ax
 ///         shr ax, cl
@@ -466,10 +468,10 @@ pub const STUB_283: &'static [u8] = b"\
 ///         mov ax, si
 ///         not ax
 ///         shr ax, cl              ; shift right by 4
-///         je .offset_ok           ;if (si < 0xfff0)
+///         je .offset_ok           ; if (si < 0xfff0)
 ///         mov dx, ds
 ///         or si, 0xfff0           ; si |= 0xfff0
-///         sub dx, ax              ; new_seg = ds - ((0xffff - si) >> 4)
+///         sub dx, ax              ; new_seg = old_seg - ((0xffff - si) >> 4)
 ///         jnb .segment_ok         ; if (new_seg < 0) shrink si instead (fix for A20 bug)
 ///         neg dx
 ///         shl dx, cl
@@ -598,6 +600,7 @@ pub const STUB_258: &[u8] = b"\
 /// .loop:
 ///         mov cl, 4
 ///         ; adjust ds:si so that si is as high as possible in the segment (without changing the address pointed to)
+///         ; because lengths can be as large as 0xffff and "rep movsb" may wrap around the segment
 ///         mov ax, si
 ///         not ax
 ///         shr ax, cl
@@ -820,6 +823,7 @@ pub const STUB_279: &[u8] = b"\
 /// .loop:
 ///         mov cl, 4
 ///         ; adjust ds:si so that si is as high as possible in the segment (without changing the address pointed to)
+///         ; because lengths can be as large as 0xffff and "rep movsb" may wrap around the segment
 ///         mov ax, si
 ///         not ax
 ///         shr ax, cl
