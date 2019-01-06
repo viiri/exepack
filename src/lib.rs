@@ -533,6 +533,7 @@ pub fn unpack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE,
             return Err(Error::EXEPACK(EXEPACKFormatError::UnknownStub(exepack_header_buffer, stub)));
         }
     };
+    debug!("using stub of length {}", stub.len());
 
     // Now that we know what stub we're dealing with, we can interpret the
     // EXEPACK header.
