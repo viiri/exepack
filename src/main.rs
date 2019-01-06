@@ -25,6 +25,14 @@ fn parse_u16le(buf: &[u8], i: usize) -> u16 {
     (buf[i] as u16) | ((buf[i+1] as u16) << 8)
 }
 
+fn write_u16le<W: Write>(w: &mut W, v: u16) -> io::Result<usize> {
+    let buf: [u8; 2] = [
+        (v & 0xff) as u8,
+        ((v >> 8) & 0xff) as u8,
+    ];
+    w.write_all(&buf[..]).and(Ok(2))
+}
+
 fn escape_u8(c: u8) -> String {
     format!("\\x{:02x}", c)
 }
@@ -91,6 +99,35 @@ fn read_exe_header<R: Read>(r: &mut R) -> io::Result<EXEHeader> {
         reloc_table_offset: parse_u16le(&buf, 24),
         overlay_number: parse_u16le(&buf, 26),
     })
+}
+
+// Return a tuple (e_cblp, e_cp) that encodes len as appropriate for the
+// so-named EXE header fields. Panics if the size is too large to be
+// represented (> 0x1fffe00).
+fn encode_exe_len(len: usize) -> (u16, u16) {
+    let blocks_in_file = (len + 511) / 512;
+    if blocks_in_file > 0xffff {
+        panic!("cannot represent the length {}", len);
+    }
+    let bytes_in_last_block = len % 512;
+    (bytes_in_last_block as u16, blocks_in_file as u16)
+}
+
+#[test]
+fn test_encode_exe_len() {
+    assert_eq!(encode_exe_len(0), (0, 0));
+    assert_eq!(encode_exe_len(1), (1, 1));
+    assert_eq!(encode_exe_len(511), (511, 1));
+    assert_eq!(encode_exe_len(512), (0, 1));
+    assert_eq!(encode_exe_len(513), (1, 2));
+    assert_eq!(encode_exe_len(512*0xffff-1), (511, 0xffff));
+    assert_eq!(encode_exe_len(512*0xffff), (0, 0xffff));
+}
+
+#[test]
+#[should_panic]
+fn test_encode_exe_len_too_large() {
+    encode_exe_len(512*0xffff + 1);
 }
 
 enum EXEFormatError {
@@ -509,17 +546,75 @@ fn unpack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE, Dec
     // exepack_header.exepack_size is larger than it needs to be). Any trailing data
     // would be ignored by the EXEPACK decompression stub.
 
-    Ok(EXE{header: exe_header, data: work_buffer})
+    let (bytes_in_last_block, blocks_in_file) = encode_exe_len(32*16 + uncompressed_len);
+    let new_exe_header = EXEHeader{
+        signature: EXE_MAGIC,
+        bytes_in_last_block: bytes_in_last_block,
+        blocks_in_file: blocks_in_file,
+        num_relocs: 0,
+        header_paragraphs: 32,
+        min_extra_paragraphs: exe_header.min_extra_paragraphs,
+        max_extra_paragraphs: exe_header.max_extra_paragraphs,
+        ss: exepack_header.real_ss,
+        sp: exepack_header.real_sp,
+        csum: 0,
+        ip: exepack_header.real_ip,
+        cs: exepack_header.real_cs,
+        reloc_table_offset: EXE_HEADER_LEN as u16,
+        overlay_number: 0,
+    };
+    debug!("{:?}", new_exe_header);
+
+    Ok(EXE{header: new_exe_header, data: work_buffer})
 }
 
 fn unpack_file<P: AsRef<Path>>(path: P) -> Result<EXE, DecompressError> {
-    let mut input = File::open(&path)?;
-    let file_len = input.metadata()?.len();
-    unpack(&mut input, Some(file_len))
+    let mut f = File::open(&path)?;
+    let file_len = f.metadata()?.len();
+    unpack(&mut f, Some(file_len))
+}
+
+fn write_exe_header<W: Write>(w: &mut W, header: &EXEHeader) -> io::Result<usize> {
+    let mut n = 0;
+    n += write_u16le(w, header.signature)?;
+    n += write_u16le(w, header.bytes_in_last_block)?;
+    n += write_u16le(w, header.blocks_in_file)?;
+    n += write_u16le(w, header.num_relocs)?;
+    n += write_u16le(w, header.header_paragraphs)?;
+    n += write_u16le(w, header.min_extra_paragraphs)?;
+    n += write_u16le(w, header.max_extra_paragraphs)?;
+    n += write_u16le(w, header.ss)?;
+    n += write_u16le(w, header.sp)?;
+    n += write_u16le(w, header.csum)?;
+    n += write_u16le(w, header.ip)?;
+    n += write_u16le(w, header.cs)?;
+    n += write_u16le(w, header.reloc_table_offset)?;
+    n += write_u16le(w, header.overlay_number)?;
+    Ok(n)
+}
+
+fn write_exe<W: Write>(w: &mut W, exe: &EXE) -> io::Result<usize> {
+    let mut n = 0;
+    n += write_exe_header(w, &exe.header)?;
+    while n % 512 != 0 {
+        let zeroes = [0; 16];
+        n += w.write(&zeroes[0..cmp::min(512 - n%512, zeroes.len())])?;
+    }
+    w.write_all(&exe.data)?;
+    n += exe.data.len();
+    Ok(n)
+}
+
+fn write_exe_file<P: AsRef<Path>>(path: P, exe: &EXE) -> io::Result<usize> {
+    let f = File::create(&path)?;
+    let mut f = io::BufWriter::new(f);
+    let n = write_exe(&mut f, exe)?;
+    f.flush()?;
+    Ok(n)
 }
 
 // http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK#File_Format
-fn decompress_mode<P: AsRef<Path>>(input_path: P, _output_path: P) -> Result<(), TopLevelError> {
+fn decompress_mode<P: AsRef<Path>>(input_path: P, output_path: P) -> Result<(), TopLevelError> {
     let exe = match unpack_file(&input_path) {
         Err(err) => return Err(TopLevelError {
             path: Some(input_path.as_ref().to_path_buf()),
@@ -527,7 +622,14 @@ fn decompress_mode<P: AsRef<Path>>(input_path: P, _output_path: P) -> Result<(),
         }),
         Ok(f) => f,
     };
-    debug!("{:?}", exe);
+    // debug!("{:?}", exe);
+
+    if let Err(err) = write_exe_file(&output_path, &exe) {
+        return Err(TopLevelError {
+            path: Some(output_path.as_ref().to_path_buf()),
+            kind: DecompressError::Io(err),
+        });
+    }
 
     Ok(())
 }
