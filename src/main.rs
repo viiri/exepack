@@ -8,6 +8,7 @@ use std::io::{self, Write};
 use std::str;
 use std::path::{Path, PathBuf};
 use std::process;
+use std::sync::atomic;
 
 struct TopLevelError {
     path: Option<PathBuf>,
@@ -154,6 +155,7 @@ Compress or decompress a DOS EXE executable with EXEPACK.",
 
 fn main() {
     let mut opts = getopts::Options::new();
+    opts.optflag("", "debug", "show debugging output on stderr");
     opts.optflag("d", "decompress", "decompress");
     opts.optflag("h", "help", "show this help");
     let matches = match opts.parse(env::args().skip(1)) {
@@ -167,6 +169,10 @@ fn main() {
     if matches.opt_present("h") {
         print_usage(&mut io::stdout(), opts).unwrap();
         return;
+    }
+
+    if matches.opt_present("debug") {
+        exepack::DEBUG.store(true, atomic::Ordering::Relaxed);
     }
 
     if matches.free.len() != 2 {

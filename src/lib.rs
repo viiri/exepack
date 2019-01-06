@@ -1,14 +1,15 @@
 use std::cmp;
 use std::fmt;
 use std::io::{self, Read, Write};
+use std::sync::atomic;
 
 mod stubs;
 
-const DEBUG: bool = true;
+pub static DEBUG: atomic::AtomicBool = atomic::AtomicBool::new(false);
 
 macro_rules! debug {
     ($($x:tt)*) => {
-        if DEBUG {
+        if DEBUG.load(atomic::Ordering::Relaxed) {
             eprintln!($($x)*);
         }
     };
