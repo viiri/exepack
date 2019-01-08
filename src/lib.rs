@@ -71,6 +71,11 @@ fn write_u16le<W: Write>(w: &mut W, v: u16) -> io::Result<usize> {
     w.write_all(&buf[..]).and(Ok(2))
 }
 
+/// Add a prefix to the message of an `io::Error`.
+fn annotate_io_error(err: io::Error, msg: &str) -> io::Error {
+    io::Error::new(err.kind(), format!("{}: {}", msg, err))
+}
+
 const EXE_MAGIC: u16 = 0x5a4d; // "MZ"
 // The length of an EXE header excluding the variable-sized padding.
 const EXE_HEADER_LEN: u64 = 28;
@@ -459,7 +464,7 @@ pub fn unpack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE,
     let mut input = io::BufReader::new(input);
 
     let exe_header = read_exe_header(&mut input)
-        .map_err(|err| io::Error::new(err.kind(), format!("reading EXE header: {}", err)))?;
+        .map_err(|err| annotate_io_error(err, "reading EXE header"))?;
     debug!("{:?}", exe_header);
 
     // Begin consistency tests on the fields of the EXE header.
@@ -504,20 +509,23 @@ pub fn unpack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE,
     // it).
     let mut work_buffer = Vec::new();
     work_buffer.resize(exe_header.e_cs as usize * 16, 0);
-    input.read_exact(&mut work_buffer)?;
+    input.read_exact(&mut work_buffer)
+        .map_err(|err| annotate_io_error(err, "reading compressed data"))?;
 
     // The EXEPACK header starts at cs:0000 and ends at cs:ip. We won't know the
     // layout of the EXEPACK header (i.e., whether there is a skip_len member)
     // until after we have read and identified the decompression stub.
     let mut exepack_header_buffer = Vec::new();
     exepack_header_buffer.resize(exe_header.e_ip as usize, 0);
-    input.read_exact(&mut exepack_header_buffer)?;
+    input.read_exact(&mut exepack_header_buffer)
+        .map_err(|err| annotate_io_error(err, "reading EXEPACK header"))?;
 
     // The decompression stub starts at cs:ip. We incrementally read with
     // increasing, known stub lengths until we find a match or exhaust the list
     // of known stubs. What we care about is whether the stub uses an explicit
     // skip_len in the EXEPACK header, or an implicit skip_len of 1.
-    let (mut stub, uses_skip_len) = read_stub(&mut input)?;
+    let (mut stub, uses_skip_len) = read_stub(&mut input)
+        .map_err(|err| annotate_io_error(err, "reading EXEPACK decompression stub"))?;
     let uses_skip_len = match uses_skip_len {
         Some(uses_skip_len) => uses_skip_len,
         None => {
@@ -578,7 +586,8 @@ pub fn unpack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE,
 
     // The last step is to parse the relocation table that follows the
     // decompression stub.
-    let relocations = read_relocations(&mut input)?;
+    let relocations = read_relocations(&mut input)
+        .map_err(|err| annotate_io_error(err, "reading EXEPACK relocation table"))?;
     debug!("{:?}", relocations);
 
     // It's not an error if there is trailing data here (i.e., if
@@ -633,23 +642,33 @@ fn write_exe_header<W: Write>(w: &mut W, header: &EXEHeader) -> io::Result<usize
     Ok(n)
 }
 
-/// Serialize an `EXE` structure to `w`. Returns the number of bytes written.
-pub fn write_exe<W: Write>(w: &mut W, exe: &EXE) -> io::Result<usize> {
+fn write_exe_relocations<W: Write>(w: &mut W, relocations: &[Relocation]) -> io::Result<usize> {
     let mut n = 0;
-    n += write_exe_header(w, &exe.header)?;
-    for relocation in exe.relocations.iter() {
+    for relocation in relocations.iter() {
         n += write_u16le(w, relocation.offset)?;
         n += write_u16le(w, relocation.segment)?;
     }
+    Ok(n)
+}
+
+/// Serialize an `EXE` structure to `w`. Returns the number of bytes written.
+pub fn write_exe<W: Write>(w: &mut W, exe: &EXE) -> io::Result<usize> {
+    let mut n = 0;
+    n += write_exe_header(w, &exe.header)
+        .map_err(|err| {debug!("annotate"); annotate_io_error(err, "writing EXE header")})?;
+    n += write_exe_relocations(w, &exe.relocations)
+        .map_err(|err| annotate_io_error(err, "writing EXE relocations"))?;
     // http://www.delorie.com/djgpp/doc/exe/: "Note that some OSs and/or
     // programs may fail if the header is not a multiple of 512 bytes." The
     // unpack function has already added the necessary amounts to e_cblp and
     // e_cp, expecting us to do this padding here.
     while n % 512 != 0 {
         let zeroes = [0; 16];
-        n += w.write(&zeroes[0..cmp::min(512 - n%512, zeroes.len())])?;
+        n += w.write(&zeroes[0..cmp::min(512 - n%512, zeroes.len())])
+            .map_err(|err| annotate_io_error(err, "writing EXE header padding"))?;
     }
-    w.write_all(&exe.data)?;
+    w.write_all(&exe.data)
+        .map_err(|err| annotate_io_error(err, "writing EXE body"))?;
     n += exe.data.len();
     Ok(n)
 }
