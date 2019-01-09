@@ -52,7 +52,7 @@
 ///         std                     ; copy operations go backwards
 ///         rep movsb               ; copy exepack_size bytes from ds (exepack_start; i.e., this code) to es (mem_start + dest_len)
 ///         mov dx, [skip_len]
-///         push ax                 ; segment to jump to (mem_start)
+///         push ax                 ; segment to jump to (mem_start + dest_len)
 ///         mov ax, (decompress - exepack_start)
 ///         push ax                 ; offset to jump to (i.e., label "decompress" in the copied block of code)
 ///         retf
@@ -280,7 +280,7 @@ pub const STUB_283: &'static [u8] = b"\
 ///         mov si, di              ; si = exepack_size - 1
 ///         std                     ; copy operations go backwards
 ///         rep movsb               ; copy exepack_size bytes from ds (exepack_start; i.e., this code) to es (mem_start + dest_len)
-///         push ax                 ; segment to jump to (mem_start)
+///         push ax                 ; segment to jump to (mem_start + dest_len)
 ///         mov ax, (decompress - exepack_start)
 ///         push ax                 ; offset to jump to (i.e., label "decompress" in the copied block of code)
 ///         retf
@@ -574,7 +574,7 @@ pub const STUB_258: &[u8] = b"\
 ///         mov si, di              ; si = exepack_size - 1
 ///         std                     ; copy operations go backwards
 ///         rep movsb               ; copy exepack_size bytes from ds (exepack_start; i.e., this code) to es (mem_start + dest_len)
-///         push ax                 ; segment to jump to (mem_start)
+///         push ax                 ; segment to jump to (mem_start + dest_len)
 ///         mov ax, (decompress - exepack_start)
 ///         push ax                 ; offset to jump to (i.e., label "decompress" in the copied block of code)
 ///         retf
@@ -797,7 +797,7 @@ pub const STUB_279: &[u8] = b"\
 ///         mov si, di              ; si = exepack_size - 1
 ///         std                     ; copy operations go backwards
 ///         rep movsb               ; copy exepack_size bytes from ds (exepack_start; i.e., this code) to es (mem_start + dest_len)
-///         push ax                 ; segment to jump to (mem_start)
+///         push ax                 ; segment to jump to (mem_start + dest_len)
 ///         mov ax, (decompress - exepack_start)
 ///         push ax                 ; offset to jump to (i.e., label "decompress" in the copied block of code)
 ///         retf
@@ -1019,7 +1019,7 @@ pub const STUB_277: &[u8] = b"\
 ///         mov si, di              ; si = exepack_size - 1
 ///         std                     ; copy operations go backwards
 ///         rep movsb               ; copy exepack_size bytes from ds (exepack_start; i.e., this code) to es (mem_start + dest_len)
-///         push ax                 ; segment to jump to (mem_start)
+///         push ax                 ; segment to jump to (mem_start + dest_len)
 ///         mov ax, (decompress - exepack_start)
 ///         push ax                 ; offset to jump to (i.e., label "decompress" in the copied block of code)
 ///         retf
