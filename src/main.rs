@@ -6,12 +6,14 @@
 //!
 //! # Compression
 //!
-//! Not implemented.
+//! ```ignore
+//! exepack input.exe packed.exe
+//! ```
 //!
 //! # Decompression
 //!
 //! ```ignore
-//! exepack -d input.exe output.exe
+//! exepack -d input.exe unpacked.exe
 //! ```
 //!
 //! # Exit status
@@ -46,18 +48,45 @@ impl fmt::Display for TopLevelError {
     }
 }
 
-fn unpack_file<P: AsRef<Path>>(path: P) -> Result<exepack::EXE, exepack::Error> {
-    let mut f = File::open(&path)?;
-    let file_len = f.metadata()?.len();
-    exepack::unpack(&mut f, Some(file_len))
-}
-
 fn write_exe_file<P: AsRef<Path>>(path: P, exe: &exepack::EXE) -> io::Result<usize> {
     let f = File::create(&path)?;
     let mut f = io::BufWriter::new(f);
     let n = exepack::write_exe(&mut f, exe)?;
     f.flush()?;
     Ok(n)
+}
+
+fn pack_file<P: AsRef<Path>>(path: P) -> Result<exepack::EXE, exepack::Error> {
+    let f = File::open(&path)?;
+    let file_len = f.metadata()?.len();
+    let mut f = io::BufReader::new(f);
+    exepack::pack(&mut f, Some(file_len))
+}
+
+fn compress_mode<P: AsRef<Path>>(input_path: P, output_path: P) -> Result<(), TopLevelError> {
+    let exe = match pack_file(&input_path) {
+        Err(err) => return Err(TopLevelError {
+            path: Some(input_path.as_ref().to_path_buf()),
+            kind: err,
+        }),
+        Ok(f) => f,
+    };
+
+    if let Err(err) = write_exe_file(&output_path, &exe) {
+        return Err(TopLevelError {
+            path: Some(output_path.as_ref().to_path_buf()),
+            kind: exepack::Error::Io(err),
+        });
+    }
+
+    Ok(())
+}
+
+fn unpack_file<P: AsRef<Path>>(path: P) -> Result<exepack::EXE, exepack::Error> {
+    let f = File::open(&path)?;
+    let file_len = f.metadata()?.len();
+    let mut f = io::BufReader::new(f);
+    exepack::unpack(&mut f, Some(file_len))
 }
 
 fn decompress_mode<P: AsRef<Path>>(input_path: P, output_path: P) -> Result<(), TopLevelError> {
@@ -205,7 +234,7 @@ fn main() {
     if let Err(err) = if matches.opt_present("d") {
         decompress_mode(&input_path, &output_path)
     } else {
-        unimplemented!("compress")
+        compress_mode(&input_path, &output_path)
     } {
         match err.kind {
             exepack::Error::EXEPACK(exepack::EXEPACKFormatError::UnknownStub(ref exepack_header_buffer, ref stub)) => {
