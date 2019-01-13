@@ -425,14 +425,247 @@ impl fmt::Display for Error {
 ///
 /// <http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK#Decompression_algorithm>
 pub fn compress(output: &mut Vec<u8>, input: &[u8]) {
-    // Copy compression: copy the original data and append a single no-op
-    // command.
-    output.extend(input.iter());
-    // Length 0.
-    output.push(0x00);
-    output.push(0x00);
-    // Copy and terminate.
-    output.push(0xb3);
+    // Since we produce our own self-extracting executable, technically we
+    // could compress however we like. But we want to remain compatible with
+    // https://github.com/w4kfu/unEXEPACK and other external EXEPACK unpackers,
+    // so we use the standard EXEPACK encoding: 0xb2 for a copy, 0xb0 for a
+    // fill, MSb == 1 to mark the end.
+    //
+    // The algorithm here uses dynamic programming. We define 3 states that the
+    // compressed stream may be in:
+    // * C ("copy") for a 0xb2/0xb3 block (copy the next len bytes)
+    // * F ("fill") for a 0xb0/0xb1 block (fill len copies of the next byte)
+    // * R ("runout") for the end of the stream after the last C or F block,
+    //   which is copied verbatim from the compressed input to the decompressed
+    //   output simply by virtue of remaining untouched in the buffer.
+    // For each input position i, we compute the minimum length of the
+    // compression of the first i bytes of the reversed input sequence. Assuming
+    // we know the values for index i-1, we compute the values for index i using
+    // the recurrences:
+    //      C[i] = min(
+    //          4 + F[i-1], // if we were in F, start a C block
+    //          1 + C[i-1], // if we were in C, continue the same C block
+    //      )
+    //      F[i] = min(
+    //          4 + C[i-1], // if we were in C, start an F block
+    //          0 + F[i-1], // if we were in F, stay in the same F block
+    //      )
+    //      R[i] = min(     // runout bytes always cost 1
+    //          1 + C[i-1],
+    //          1 + F[i-1],
+    //          1 + R[i-1],
+    //      )
+    // The transitions R→R R→C, R→F, C→C, C→F, F→F, F→C are valid, while C→R and
+    // F→R are not (once you leave the runout you can't go back to it;
+    // everything following has to be a C or F block). The actual formulas used
+    // in the code are a little more complicated because we also have to account
+    // for the fact that the length of each block is limited. For example, if a
+    // current C block is full, we can't append to it and instead have to start
+    // a new one.
+    //
+    // The we walk backwards through the minimum-cost tables. At each index i we
+    // choose whichever of C, F, and R has the lowest cost--with the restriction
+    // that once we have select C or F once, we can never again select R. Then
+    // we jump i ahead by the length of the command, and repeat until we reach
+    // the beginning of the tables. In the case where we stayed in R throughout
+    // (i.e., an incompressible sequence), we tack on a dummy "copy 0" command
+    // at the end--in this case (the worst case) the compressed data are 3 bytes
+    // larger than the uncompressed.
+    //
+    // I'm not sure the algorithm used here is optimal with respect to the
+    // length of commands. In the 1-dimensional C and F tables I'm storing the
+    // single command length that led to the minimum cost at each position. A
+    // more complete consideration of cases would make each table 2-dimensional,
+    // indexed by input position and by command length. If there is a
+    // difference, it's likely to be minor.
+    //
+    // A greedy algorithm (that uses F for runs of 5 or longer, C otherwise) is
+    // not optimal. Consider the sequence
+    //      ... 01 02 03 04 05 cc cc cc cc cc 01 02 03 04 05
+    // (Assume the left side doesn't enter runout.) A greedy compressor would
+    // compress it to
+    //      ... 01 02 03 04 05 05 00 b2 cc 05 00 b0 01 02 03 04 05 05 00 b2
+    // i.e., a C of length 5, then an F of length 5, then a C of length 5. But
+    // switching from C to F back to C again costs more than compressing the run
+    // of 5 cc's saves. A better compression is just one long C:
+    //      ... 01 02 03 04 05 cc cc cc cc cc 01 02 03 04 05 0f 00 b2
+    //
+    // We don't take advantage of every possible optimization. For example,
+    // suppose for a moment that the maximum length we can use is 6 rather than
+    // 0xffff. Consider the 7-byte sequence
+    //      cc cc cc cc cc cc cc
+    // We will compress this into 5 bytes as
+    //      cc cc 06 00 b1
+    // (i.e., fill 6×cc, then one runout cc). But we could save 1 additional
+    // byte by re-using one of the cc's both as a command parameter and a
+    // runout byte:
+    //      cc 06 00 b1
+    // For that matter, if we happened to get the 8-byte input
+    //      cc 06 cc cc cc cc cc cc
+    // we could re-use the 2 bytes cc 06 and compress as
+    //      cc 06 00 b1
+
+    // This is the maximum length we allow for any single C or F command.
+    // Because the field is a u16, it may seem we can go up to 0xffff, but the
+    // segment:offset addressing used by the in-executable decompression routine
+    // means that we are only guaranteed to have 0xfff0 bytes in the same
+    // segment.
+    const MAX_LEN: u16 = 0xfff0;
+
+    // Stage 1: build the tables of costs and command lengths for each input
+    // position.
+
+    // Allocate tables of costs (minimum compressed length) for each of C, F,
+    // and R; and additionally command lengths for C and F (R doesn't have
+    // command lengths). C[i+1].cost is the minimum length to compress up
+    // input[0..i] if we are in a C command at position i; likewise for F and R.
+    #[derive(Ord, PartialOrd, PartialEq, Eq)]
+    struct Entry {
+        cost: u32,
+        len: u16,
+    }
+    #[allow(non_snake_case)]
+    let (mut C, mut F, mut R): (Vec<Entry>, Vec<Entry>, Vec<u32>) = (
+        Vec::with_capacity(input.len() + 1),
+        Vec::with_capacity(input.len() + 1),
+        Vec::with_capacity(input.len() + 1),
+    );
+    // The tables are 1 element longer than the input. The zeroth entry in each
+    // represents the "-1" index; i.e., the cost/length of compressing a
+    // zero-length input using each of the strategies.
+    C.push(Entry{cost: 3, len: 0}); // 00 00 b1
+    F.push(Entry{cost: 4, len: 0}); // XX 00 00 b3
+    // if we've done the whole input in the R state, we'll need to append a
+    // 00 00 b1 (just as in C), solely for the sake of giving the decompression
+    // routine a termination indicator.
+    R.push(3);
+
+    for j in (0..input.len()).rev() {
+        // j indexes input backwards from input.len()-1 to 0; i indexes the
+        // cost/length tables forward from 1 to input.len().
+        let i = input.len() - j;
+        // If we require byte j to be in a C command, then we either start a new
+        // C command here, or continue an existing C command.
+        let entry = cmp::min(
+            // If we previous byte was in an F, then it costs 4 bytes to start a
+            // C at this point.
+            Entry{cost: 4 + F[i-1].cost, len: 1},
+            // If we were already in a C command, we have the option of
+            // appending the current byte into the same command for an
+            // additional cost of 1--but only if its len does not exceed
+            // MAX_LEN. If it does, then we have to start a new C command at a
+            // cost of 4.
+            if C[i-1].len < MAX_LEN {
+                Entry{cost: 1 + C[i-1].cost, len: 1 + C[i-1].len}
+            } else {
+                Entry{cost: 4 + C[i-1].cost, len: 1}
+            }
+        );
+        // Push the minimum value to C[i].
+        C.push(entry);
+
+        // If we require byte j to be in an F command, then we either start a
+        // new F command here, or continue an existing F command.
+        let entry = cmp::min(
+            // If we previous byte was in a C, then it costs 4 bytes to start an
+            // F at this point.
+            Entry{cost: 4 + C[i-1].cost, len: 1},
+            // If we were already in a F command, we have the option of
+            // including the current byte in the same command for an additional
+            // cost of 0--but only if its len does not exceed MAX_LEN *and* the
+            // byte value is identical to the previous one (or we are at the
+            // first byte and there is no previous one yet). Otherwise, we need
+            // to start a new F command at a cost of 4.
+            if F[i-1].len < MAX_LEN && (j == input.len()-1 || input[j] == input[j+1]) {
+                Entry{cost: 0 + F[i-1].cost, len: 1 + F[i-1].len}
+            } else {
+                Entry{cost: 4 + F[i-1].cost, len: 1}
+            }
+        );
+        // Push the minimum value to F[i].
+        F.push(entry);
+
+        // Finally, if we require byte j to be in the R runout, the cost is 1
+        // greater than the minimum cost so far using any of C, F, or R (the
+        // cost of the verbatim byte itself). Note that we can switch from from
+        // C or F to R, but once in R there is no going back to C or F.
+        let cost = C[i-1].cost.min(F[i-1].cost).min(R[i-1]) + 1;
+        // Push the minimum cost to R[i].
+        R.push(cost);
+    }
+
+    // Stage 2: trace back through the C, F, and R tables to recover the
+    // sequence of commands that lead to the minimum costs we computed.
+    enum Cmd {
+        C,
+        F,
+        R,
+    }
+    // The command currently in effect. We encode forward, but the decompressor
+    // will run backwards. Start in the runout.
+    let mut cmd = Cmd::R;
+    // The first time we encode a C or F (i.e., when we get out of the runout),
+    // we need to set the LSb to indicate that it is the final command.
+    let mut is_final: u8 = 0x01;
+    let mut j = 0;
+    while j < input.len() {
+        // j indexes input from beginning to end; i indexes the cost/length
+        // tables from end to beginning.
+        let i = input.len() - j;
+        // We consult the C and F tables and see if either of them have a lower
+        // cost than the current command (which may be C, F, or R) at this
+        // index.
+        let mut cost = match cmd {
+            Cmd::C => C[i].cost,
+            Cmd::F => F[i].cost,
+            Cmd::R => R[i],
+        };
+        if C[i].cost < cost {
+            cost = C[i].cost;
+            cmd = Cmd::C;
+        }
+        if F[i].cost < cost {
+            cmd = Cmd::F;
+        }
+
+        // Now encode the command we've found to be the cheapest at this
+        // position.
+        match cmd {
+            Cmd::C => {
+                let len = C[i].len as usize;
+                output.extend(input[j..j+len].iter());
+                output.push(len as u8);
+                output.push((len >> 8) as u8);
+                output.push(0xb2 | is_final);
+                is_final = 0;
+                j += len;
+            }
+            Cmd::F => {
+                let len = F[i].len as usize;
+                output.push(input[j]);
+                output.push(len as u8);
+                output.push((len >> 8) as u8);
+                output.push(0xb0 | is_final);
+                is_final = 0;
+                j += len;
+            }
+            Cmd::R => {
+                output.push(input[j]);
+                j += 1;
+            }
+        }
+    }
+    assert_eq!(j, input.len());
+    // If we got all the way to the end and are still in the runout, then we
+    // need to append a dummy, zero-length C command for the sake of giving the
+    // decompression routine something to interpret. This is the worst case for
+    // an incompressible input, an expansion of 3 bytes.
+    if let Cmd::R = cmd {
+        output.push(0);
+        output.push(0);
+        assert_eq!(is_final, 1);
+        output.push(0xb2 | is_final);
+    }
 }
 
 /// Encode a compressed relocation table.
