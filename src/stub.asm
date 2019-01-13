@@ -1,0 +1,210 @@
+; EXEPACK decompression blob.
+; This one aims to be compatible with Microsoft EXEPACK, while fixing
+; the segment underflow (A20 gate) and relocation-at-offset-0xffff bugs,
+; while fitting into what appears to be the most common size of 283
+; bytes.
+;
+; Constraints:
+; * EXEPACK header is 18 bytes (i.e., includes a skip_len field).
+; * EXEPACK header fields other than mem_start have the same meaning as
+;   in Microsoft EXEPACK.
+; * Total size is exactly 283 bytes exclusive of relocations; i.e. label
+;   relocation_entries is at offset 283.
+; * Ends with "Packed file is corrupt".
+
+BITS 16
+ORG 18	; EXEPACK header is 18 bytes.
+
+; Offsets of fields in the EXEPACK header.
+; http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK#EXEPACK_variables
+real_IP		equ	0
+real_CS		equ	2
+mem_start	equ	4	; unused
+exepack_size	equ	6	; will have the value 283 + len(relocations)
+real_SP		equ	8
+real_SS		equ	10
+dest_len	equ	12
+skip_len	equ	14	; unused; will have the value 1
+signature	equ	16	; unused
+
+; We use stupid and slow segment:offset addressing. Instead of shifting
+; segments in attempt to do maximal-length "rep lodsb" and "rep movsb",
+; we call dec_ds_si and dec_es_di in loops. dec_ds_si and dec_es_di in
+; effect canonicalize the segment:offset format so that decrementing
+; never decreases ds or es by more than 1.
+
+; On load,
+; * ds and es are set to the segment of the Program Segment Prefix
+;   (PSP). The compressed data starts 256 bytes beyond that, at an
+;   address we call mem_start.
+; * cs is set to exepack_start (beginning of EXEPACK header).
+; * ip is set to copy_decompressor_stub.
+; * ax contains a value that we must restore before jumping to the
+;   decompressed program.
+copy_decompressor_stub:
+	mov bp, ax		; save ax
+
+	mov ax, es
+	add ax, word 0x10	; ax = es:0100 (mem_start, beginning of compressed data)
+	mov bx, ax		; save mem_start, we will use it again during relocation
+
+	push cs
+	pop ds			; ds = cs (exepack_start)
+
+	add ax, [dest_len]
+	mov es, ax		; es = mem_start + dest_len
+
+	; Copy everything between exepack and the end of relocations to a
+	; location higher in memory, mem_start + dest_len.
+	mov cx, [exepack_size]
+	xor si, si		; ds:si points to the source buffer, exepack_start
+	xor di, di		; es:di points to the destination buffer, mem_start + dest_len
+	rep movsb		; copy
+
+	push ax			; segment to jump to (mem_start + dest_len)
+	mov ax, decompress
+	push ax			; offset to jump to (i.e., label "decompress" in the copied block of code)
+	retf			; jump to the copied code
+
+; Decrement ds:si.
+dec_ds_si:
+	sub si, 1
+	jae .si_ok
+	mov si, ds
+	dec si
+	mov ds, si
+	mov si, 0xf
+.si_ok:
+	ret
+
+; Decrement es:di.
+dec_es_di:
+	sub di, 1
+	jae .di_ok
+	mov di, es
+	dec di
+	mov es, di
+	mov di, 0xf
+.di_ok:
+	ret
+
+decompress:
+	; Skip past 0xff padding.
+	xor si, si		; ds:si = exepack_start, just past the end of the compressed data + padding
+.padding_loop:
+	call dec_ds_si
+	mov al, [ds:si]
+	cmp al, 0xff
+	je .padding_loop
+	; ds:si now points to the final byte of compressed data in the original buffer
+
+	xor di, di
+	call dec_es_di
+	; es:di now points to the final byte of the decompression buffer
+
+; src  = ds:si
+; dest = es:di
+.loop:
+	; dl = command byte
+	mov dl, [ds:si]
+	call dec_ds_si
+
+	; cx = length
+	mov ch, [ds:si]
+	call dec_ds_si
+	mov cl, [ds:si]
+	call dec_ds_si
+
+	mov al, dl
+	and al, 0xfe
+.try_b0:
+	cmp al, 0xb0		; 0xb0 fill command
+	jne .try_b2		; if (command & 0xfe) == 0xb0
+
+	mov al, [ds:si]		; read fill byte
+	call dec_ds_si
+
+	jcxz .loop_end
+.fill_loop:			; fill for length of cx
+	mov [es:di], al
+	call dec_es_di
+	loop .fill_loop
+
+	jmp .loop_end
+
+.try_b2:
+	cmp al, 0xb2		; 0xb2 copy command
+	jne error		; if (command & 0xfe) == 0xb2
+
+	jcxz .loop_end
+.copy_loop:			; copy for length of cx
+	mov al, [ds:si]
+	call dec_ds_si
+	mov [es:di], al
+	call dec_es_di
+	loop .copy_loop
+
+.loop_end:
+	test dl, 0x01
+	je .loop		; repeat until (command & 0x01) == 1
+
+	push cs
+	pop ds			; ds = exepack_start
+	mov si, relocation_entries	; ds:si points to the beginning of the packed relocation table
+	; dx = current relocation segment (increments by 0x1000)
+	xor dx, dx
+apply_relocations:
+	lodsw
+	; cx = number of entries in the current segment
+	mov cx, ax
+	jcxz .next_segment
+.next_address:			; while (cx > 0)
+	lodsw			; read next relocation offset
+	mov di, ax
+	; Rewrite a pointer of the form X000:abcd as Xabc:000d to avoid
+	; a wraparound problem when the offset is 0xffff.
+	and di, 0x000f		; keep the lower 4 bits of the offset
+	shr ax, 4		; shift the upper 12 bits into the segment
+	add ax, bx		; bx is mem_start from the beginning
+	add ax, dx		; dx is current relocation segment
+	mov es, ax		; es:di points to relocation target word
+	add word [es:di], bx	; *target += mem_start
+	loop .next_address
+
+.next_segment:
+	add dh, 0x10		; next relocation segment
+	jne apply_relocations	; repeat until we wrap from 0xf000 back to 0x0000
+
+execute_decompressed_program:
+	mov ax, bx		; ax = mem_start
+	mov si, word [real_SS]
+	add si, ax		; si = relocated real_SS
+	mov di, word [real_SP]	; di = real_SP
+	add word [real_CS], ax	; real_CS = relocated real_CS
+	sub ax, 0x10
+	mov ds, ax		; ds = mem_start - 0x10 (start of PSP)
+	mov es, ax		; es = mem_start - 0x10 (start of PSP)
+	cli
+	mov ss, si		; ss = real_SS + mem_start
+	mov sp, di		; sp = real_SP
+	sti
+	mov ax, bp		; restore original ax
+	mov bx, real_IP		; bx points to the 4-byte long pointer real_CS:real_IP.
+	jmp far [cs:bx]		; jump to real_CS:real_IP.
+
+; Pad to make the total size 283 bytes.
+TIMES	283-(relocation_entries-error)-($-$$)	nop
+
+error:
+	mov ah, 0x40		; ah=0x40 => write to file handle
+	mov bx, 2		; file handle 2 (stderr)
+	mov cx, 0x16		; 22 bytes of data (strlen("Packed file is corrupt"))
+	mov dx, cs
+	mov ds, dx		; ds = cs
+	mov dx, .errmsg		; ds:dx is address of string to write
+	int 0x21		; syscall
+	mov ax, 0x4cff		; ah=0x4c => exit program; al=0xff => exit code -1
+	int 0x21		; syscall
+.errmsg:	db	'Packed file is corrupt'
+
+relocation_entries:

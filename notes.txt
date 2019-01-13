@@ -1,17 +1,3 @@
-== 16-bit GCC; useful if we want to make our own decompression stub?
-
-https://github.com/tkchia/gcc-ia16
-https://github.com/tkchia/build-ia16
-
-https://www.reddit.com/r/programming/comments/62sqe6/gcc_for_8088808680286_cpus/
-https://blogs.mentor.com/embedded/blog/2017/04/01/announcing-sourcery-codebench-lite-for-ia16/
-
-https://hackaday.com/2018/05/14/msdos-development-with-gcc/
-http://nullprogram.com/blog/2014/12/09/
-https://www.youtube.com/watch?v=Y7vU5T6rKHE
-https://www.youtube.com/watch?v=EXiF7g8Hmt4
-
-
 == Different versions of EXEPACK
 
 https://github.com/w4kfu/unEXEPACK/issues/3
