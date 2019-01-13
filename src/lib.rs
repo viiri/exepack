@@ -322,6 +322,7 @@ fn test_encode_exe_len() {
     assert_eq!(encode_exe_len(512*0xffff+1), None);
 }
 
+#[derive(Debug)]
 pub enum EXEPACKFormatError {
     UnknownStub(Vec<u8>, Vec<u8>),
     BadMagic(u16),
@@ -423,7 +424,7 @@ impl fmt::Display for Error {
 /// from `input` and written into the end of `output`.
 ///
 /// <http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK#Decompression_algorithm>
-fn compress(output: &mut Vec<u8>, input: &[u8]) {
+pub fn compress(output: &mut Vec<u8>, input: &[u8]) {
     // Copy compression: copy the original data and append a single no-op
     // command.
     output.extend(input.iter());
@@ -568,7 +569,7 @@ pub fn pack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE, E
 /// starting at `dst`.
 ///
 /// <http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK#Decompression_algorithm>
-fn decompress(buf: &mut [u8], mut dst: usize, mut src: usize) -> Result<(), EXEPACKFormatError> {
+pub fn decompress(buf: &mut [u8], mut dst: usize, mut src: usize) -> Result<(), EXEPACKFormatError> {
     // Skip 0xff padding (only up to 16 bytes of it).
     for _ in 0..16 {
         if src == 0 {
