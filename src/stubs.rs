@@ -68,11 +68,11 @@
 ///         mov al, 0xff
 ///         repe scasb              ; scan es:di backwards for first non-0xff byte
 ///         inc di
-///         mov si, di              ; ds:si points just past the end of compressed data in the original buffer
+///         mov si, di              ; ds:si points to the final byte of the compressed data in the original buffer
 ///         mov ax, bx
 ///         sub ax, dx
 ///         mov es, ax              ; es = mem_start + dest_len - skip_len
-///         mov di, 15              ; es:di points at the final byte of the expanded buffer
+///         mov di, 15              ; es:di points to the final byte of the decompression buffer
 /// ; src =  ds:si
 /// ; dest = es:di
 /// .loop:
@@ -176,12 +176,12 @@
 ///         sub ax, 0x10
 ///         mov ds, ax              ; es = mem_start - 0x10 (segment of start of PSP)
 ///         mov es, ax              ; es = mem_start - 0x10 (segment of start of PSP)
-///         mov bx, 0
+///         mov bx, real_IP         ; bx points to the 4-byte long pointer real_CS:real_IP.
 ///         cli
 ///         mov ss, si              ; ss = mem_start + real_SS
 ///         mov sp, di              ; sp = real_SP
 ///         sti
-///         jmp [cs:bx]             ; jump to start of decompressed code
+///         jmp far [cs:bx]         ; jump to real_CS:real_IP
 ///
 /// error:
 ///         mov ah, 0x40            ; ah=0x40 => write to file handle
@@ -296,11 +296,11 @@ pub const STUB_283: &'static [u8] = b"\
 ///         mov al, 0xff
 ///         repe scasb              ; scan es:di backwards for first non-0xff byte
 ///         inc di
-///         mov si, di              ; ds:si points just past the end of compressed data in the original buffer
+///         mov si, di              ; ds:si points to the final byte of the compressed data in the original buffer
 ///         mov ax, bx
 ///         dec ax
 ///         mov es, ax              ; es = mem_start + dest_len - 1
-///         mov di, 15              ; es:di points at the final byte of the expanded buffer
+///         mov di, 15              ; es:di points to the final byte of the decompression buffer
 /// ; src =  ds:si
 /// ; dest = es:di
 /// .loop:
@@ -389,12 +389,12 @@ pub const STUB_283: &'static [u8] = b"\
 ///         sub ax, 0x10
 ///         mov ds, ax              ; es = mem_start - 0x10 (segment of start of PSP)
 ///         mov es, ax              ; es = mem_start - 0x10 (segment of start of PSP)
-///         mov bx, 0
+///         mov bx, real_IP         ; bx points to the 4-byte long pointer real_CS:real_IP.
 ///         cli
 ///         mov ss, si              ; ss = mem_start + real_SS
 ///         mov sp, di              ; sp = real_SP
 ///         sti
-///         jmp [cs:bx]             ; jump to start of decompressed code
+///         jmp far [cs:bx]         ; jump to real_CS:real_IP
 ///
 /// error:
 ///         mov ah, 0x40            ; ah=0x40 => write to file handle
@@ -453,8 +453,8 @@ pub const STUB_283: &'static [u8] = b"\
 ///         mov al, 0xff
 ///         repe scasb              ; scan es:di backwards for first non-0xff byte
 ///         inc di
-///         mov si, di              ; ds:si points just past the end of compressed data in the original buffer
-///         pop di                  ; es:di points at the final byte of the expanded buffer
+///         mov si, di              ; ds:si points to the final byte of the compressed data in the original buffer
+///         pop di                  ; es:di points to the final byte of the decompression buffer
 ///         pop ax                  ; ax = mem_start + dest_len
 ///         dec ax
 ///         mov es, ax              ; es = mem_start + dest_len - 1
@@ -590,11 +590,11 @@ pub const STUB_258: &[u8] = b"\
 ///         mov al, 0xff
 ///         repe scasb              ; scan es:di backwards for first non-0xff byte
 ///         inc di
-///         mov si, di              ; ds:si points just past the end of compressed data in the original buffer
+///         mov si, di              ; ds:si points to the final byte of the compressed data in the original buffer
 ///         mov ax, bx
 ///         dec ax
 ///         mov es, ax              ; es = mem_start + dest_len - 1
-///         mov di, 15              ; es:di points at the final byte of the expanded buffer
+///         mov di, 15              ; es:di points to the final byte of the decompression buffer
 /// ; src =  ds:si
 /// ; dest = es:di
 /// .loop:
@@ -698,12 +698,12 @@ pub const STUB_258: &[u8] = b"\
 ///         sub ax, 0x10
 ///         mov ds, ax              ; es = mem_start - 0x10 (segment of start of PSP)
 ///         mov es, ax              ; es = mem_start - 0x10 (segment of start of PSP)
-///         mov bx, 0
+///         mov bx, real_IP         ; bx points to the 4-byte long pointer real_CS:real_IP.
 ///         cli
 ///         mov ss, si              ; ss = mem_start + real_SS
 ///         mov sp, di              ; sp = real_SP
 ///         sti
-///         jmp [cs:bx]             ; jump to start of decompressed code
+///         jmp far [cs:bx]         ; jump to real_CS:real_IP
 ///
 /// error:
 ///         mov ah, 0x40            ; ah=0x40 => write to file handle
@@ -813,11 +813,11 @@ pub const STUB_279: &[u8] = b"\
 ///         mov al, 0xff
 ///         repe scasb              ; scan es:di backwards for first non-0xff byte
 ///         inc di
-///         mov si, di              ; ds:si points just past the end of compressed data in the original buffer
+///         mov si, di              ; ds:si points to the final byte of the compressed data in the original buffer
 ///         mov ax, bx
 ///         dec ax
 ///         mov es, ax              ; es = mem_start + dest_len - 1
-///         mov di, 15              ; es:di points at the final byte of the expanded buffer
+///         mov di, 15              ; es:di points to the final byte of the decompression buffer
 /// ; src =  ds:si
 /// ; dest = es:di
 /// .loop:
@@ -921,12 +921,12 @@ pub const STUB_279: &[u8] = b"\
 ///         sub ax, 0x10
 ///         mov ds, ax              ; es = mem_start - 0x10 (segment of start of PSP)
 ///         mov es, ax              ; es = mem_start - 0x10 (segment of start of PSP)
-///         mov bx, 0
+///         mov bx, real_IP         ; bx points to the 4-byte long pointer real_CS:real_IP.
 ///         cli
 ///         mov ss, si              ; ss = mem_start + real_SS
 ///         mov sp, di              ; sp = real_SP
 ///         sti
-///         jmp [cs:bx]             ; jump to start of decompressed code
+///         jmp far [cs:bx]         ; jump to real_CS:real_IP
 ///
 /// error:
 ///         mov ah, 0x40            ; ah=0x40 => write to file handle
@@ -1035,11 +1035,11 @@ pub const STUB_277: &[u8] = b"\
 ///         mov al, 0xff
 ///         repe scasb              ; scan es:di backwards for first non-0xff byte
 ///         inc di
-///         mov si, di              ; ds:si points just past the end of compressed data in the original buffer
+///         mov si, di              ; ds:si points to the final byte of the compressed data in the original buffer
 ///         mov ax, bx
 ///         dec ax
 ///         mov es, ax              ; es = mem_start + dest_len - 1
-///         mov di, 15              ; es:di points at the final byte of the expanded buffer
+///         mov di, 15              ; es:di points to the final byte of the decompression buffer
 /// ; src =  ds:si
 /// ; dest = es:di
 /// .loop:
@@ -1150,13 +1150,13 @@ pub const STUB_277: &[u8] = b"\
 ///         sub ax, 0x10
 ///         mov ds, ax              ; es = mem_start - 0x10 (segment of start of PSP)
 ///         mov es, ax              ; es = mem_start - 0x10 (segment of start of PSP)
-///         mov bx, 0
+///         mov bx, real_IP         ; bx points to the 4-byte long pointer real_CS:real_IP.
 ///         cli
 ///         mov ss, si              ; ss = mem_start + real_SS
 ///         mov sp, di              ; sp = real_SP
 ///         sti
 ///         mov ax, bp              ; restore ax
-///         jmp [cs:bx]             ; jump to start of decompressed code
+///         jmp far [cs:bx]         ; jump to real_CS:real_IP
 ///
 /// error:
 ///         mov ah, 0x40            ; ah=0x40 => write to file handle
