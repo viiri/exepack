@@ -769,16 +769,14 @@ pub fn unpack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE,
     // Compressed data starts immediately after the EXE header and ends at
     // cs:0000. We will decompress into the very same buffer (after expanding
     // it).
-    let mut work_buffer = Vec::new();
-    work_buffer.resize(exe_header.e_cs as usize * 16, 0);
+    let mut work_buffer = vec![0; exe_header.e_cs as usize * 16];
     input.read_exact(&mut work_buffer)
         .map_err(|err| annotate_io_error(err, "reading compressed data"))?;
 
     // The EXEPACK header starts at cs:0000 and ends at cs:ip. We won't know the
     // layout of the EXEPACK header (i.e., whether there is a skip_len member)
     // until after we have read and identified the decompression stub.
-    let mut exepack_header_buffer = Vec::new();
-    exepack_header_buffer.resize(exe_header.e_ip as usize, 0);
+    let mut exepack_header_buffer = vec![0; exe_header.e_ip as usize];
     input.read_exact(&mut exepack_header_buffer)
         .map_err(|err| annotate_io_error(err, "reading EXEPACK header"))?;
 
