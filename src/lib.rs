@@ -1073,6 +1073,8 @@ pub fn unpack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE,
     }
     // Now let's actually decompress the buffer.
     decompress(&mut work_buffer, uncompressed_len, compressed_len)?;
+    // Decompression might have shrunk the input; trim the buffer if so.
+    work_buffer.resize(uncompressed_len, 0);
 
     // The last step is to parse the relocation table that follows the
     // decompression stub.
