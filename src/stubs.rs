@@ -1,3 +1,6 @@
+// Our pre-assembled decompression stub.
+pub const STUB_OURS: &'static [u8; 283] = include!("stub.in");
+
 /// Seems to be the most common decompression stub. Matches the format described
 /// at <http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK#File_Format> and
 /// understood by <https://github.com/w4kfu/unEXEPACK> and

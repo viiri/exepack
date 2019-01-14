@@ -733,12 +733,12 @@ pub fn pack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE, E
     assert_eq!(data.len() % 16, 0);
     let compressed_len = data.len();
 
-    let our_stub = stubs::STUB_283;
     let mut relocations_buffer = Vec::new();
     encode_relocations(&mut relocations_buffer, &relocations)?;
 
-    let exepack_size = checked_u16(18 + our_stub.len() + relocations_buffer.len())
-        .ok_or(Error::EXEPACK(EXEPACKFormatError::EXEPACKTooLong(18 + our_stub.len() + relocations_buffer.len())))?;
+    let stub_ours = stubs::STUB_OURS;
+    let exepack_size = checked_u16(18 + stub_ours.len() + relocations_buffer.len())
+        .ok_or(Error::EXEPACK(EXEPACKFormatError::EXEPACKTooLong(18 + stub_ours.len() + relocations_buffer.len())))?;
     // It's possible for the compressed data to be longer than the uncompressed
     // data.
     let work_len = cmp::max(uncompressed.len(), compressed_len);
@@ -759,7 +759,7 @@ pub fn pack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE, E
         push_u16le(&mut data, *exe_var);
     }
 
-    data.extend(our_stub.iter());
+    data.extend(stub_ours.iter());
     data.extend(relocations_buffer.iter());
 
     let (e_cblp, e_cp) = encode_exe_len(512 + data.len())
@@ -767,7 +767,7 @@ pub fn pack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE, E
     let e_cs = checked_u16(compressed_len / 16)
         .ok_or(Error::EXE(EXEFormatError::CompressedTooLong(data.len())))?;
     let e_ss = {
-        let len = work_len + our_stub.len() + relocations_buffer.len();
+        let len = work_len + stub_ours.len() + relocations_buffer.len();
         let len = len + (16 - len % 16) % 16;
         // Microsoft EXEPACK puts e_ss at one segment greater.
         checked_u16(len / 16)
@@ -929,11 +929,12 @@ fn read_up_to<R: Read>(r: &mut R, buf: &mut [u8]) -> io::Result<usize> {
 fn read_stub<R: Read>(r: &mut R) -> io::Result<(Vec<u8>, Option<bool>)> {
     // Mapping of known stubs to whether they use skip_len. Needs to be sorted
     // by length.
-    const KNOWN_STUBS: [(&[u8], bool); 5] = [
+    const KNOWN_STUBS: [(&[u8], bool); 6] = [
         (stubs::STUB_258, false),
         (stubs::STUB_277, false),
         (stubs::STUB_279, false),
         (stubs::STUB_283, true),
+        (stubs::STUB_OURS, true),
         (stubs::STUB_290, false),
     ];
     let mut stub = Vec::new();
