@@ -43,7 +43,6 @@
 use std::cmp;
 use std::fmt;
 use std::io::{self, Read, Write};
-use std::iter;
 use std::sync::atomic;
 
 pub mod stubs;
@@ -715,23 +714,25 @@ pub fn pack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE, E
     input.read_to_end(&mut uncompressed)
         .map_err(|err| annotate_io_error(err, "reading EXE body"))?;
     // debug!("{:?}", uncompressed);
-    // Pad length to a multiple of 16 bytes.
+    // Pad uncompressed to a multiple of 16 bytes.
     {
-        let lack = (16 - uncompressed.len() % 16) % 16;
-        uncompressed.extend(iter::repeat(0x00).take(lack));
+        let len = uncompressed.len() + (16 - uncompressed.len() % 16) % 16;
+        uncompressed.resize(len, 0x00);
     }
     assert_eq!(uncompressed.len() % 16, 0);
 
-    let mut data = Vec::new();
-    compress(&mut data, &uncompressed);
-    // debug!("{:?}", data);
-    // Pad length to a multiple of 16 bytes.
+    let mut compressed = Vec::new();
+    compress(&mut compressed, &uncompressed);
+    // debug!("{:?}", compressed);
+    // Pad compressed to a multiple of 16 bytes.
     {
-        let lack = (16 - data.len() % 16) % 16;
-        data.extend(iter::repeat(0xff).take(lack));
+        let len = compressed.len() + (16 - compressed.len() % 16) % 16;
+        compressed.resize(len, 0xff);
     }
-    assert_eq!(data.len() % 16, 0);
-    let compressed_len = data.len();
+    assert_eq!(compressed.len() % 16, 0);
+
+    let mut data = Vec::new();
+    data.extend(compressed.iter());
 
     let mut relocations_buffer = Vec::new();
     encode_relocations(&mut relocations_buffer, &relocations)?;
@@ -741,7 +742,7 @@ pub fn pack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE, E
         .ok_or(Error::EXEPACK(EXEPACKFormatError::EXEPACKTooLong(18 + stub_ours.len() + relocations_buffer.len())))?;
     // It's possible for the compressed data to be longer than the uncompressed
     // data.
-    let work_len = cmp::max(uncompressed.len(), compressed_len);
+    let work_len = cmp::max(uncompressed.len(), compressed.len());
     let dest_len = checked_u16(work_len / 16)
         .ok_or(Error::EXEPACK(EXEPACKFormatError::UncompressedTooLong(uncompressed.len())))?;
     // Write the 18-byte EXEPACK header.
@@ -764,7 +765,7 @@ pub fn pack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE, E
 
     let (e_cblp, e_cp) = encode_exe_len(512 + data.len())
         .ok_or(Error::EXE(EXEFormatError::TooLong(data.len())))?;
-    let e_cs = checked_u16(compressed_len / 16)
+    let e_cs = checked_u16(compressed.len() / 16)
         .ok_or(Error::EXE(EXEFormatError::CompressedTooLong(data.len())))?;
     let e_ss = {
         let len = work_len + stub_ours.len() + relocations_buffer.len();
