@@ -17,3 +17,6 @@ https://www.youtube.com/watch?v=EXiF7g8Hmt4
 https://github.com/w4kfu/unEXEPACK/issues/3
 https://github.com/horsicq/Detect-It-Easy/blob/master/db/MSDOS/EXEPACK.2.sg
 https://github.com/horsicq/Detect-It-Easy/blob/master/db/MSDOS/WordPerfect%20EXEPack.2.sg
+
+https://www.classicdosgames.com/compression/exepack.html
+"2nd generation"
