@@ -738,22 +738,18 @@ pub fn pack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE, E
     encode_relocations(&mut relocations_buffer, &relocations)?;
 
     let stub_ours = stubs::STUB_OURS;
-    let exepack_size = checked_u16(18 + stub_ours.len() + relocations_buffer.len())
-        .ok_or(Error::EXEPACK(EXEPACKFormatError::EXEPACKTooLong(18 + stub_ours.len() + relocations_buffer.len())))?;
-    // It's possible for the compressed data to be longer than the uncompressed
-    // data.
-    let work_len = cmp::max(uncompressed.len(), compressed.len());
-    let dest_len = checked_u16(work_len / 16)
-        .ok_or(Error::EXEPACK(EXEPACKFormatError::UncompressedTooLong(uncompressed.len())))?;
+    let exepack_size = 18 + stub_ours.len() + relocations_buffer.len();
     // Write the 18-byte EXEPACK header.
     for exe_var in [
         exe_header.e_ip,    // real_ip
         exe_header.e_cs,    // real_ip
         0,                  // mem_start
-        exepack_size,       // exepack_size
+        checked_u16(exepack_size)
+            .ok_or(Error::EXEPACK(EXEPACKFormatError::EXEPACKTooLong(exepack_size)))?,  // exepack_size
         exe_header.e_sp,    // real_sp
         exe_header.e_ss,    // real_ss
-        dest_len,           // dest_len
+        checked_u16(uncompressed.len() / 16)
+            .ok_or(Error::EXEPACK(EXEPACKFormatError::UncompressedTooLong(uncompressed.len())))?,   // dest_len
         1,                  // skip_len
         EXEPACK_MAGIC,      // signature
     ].iter() {
@@ -767,8 +763,23 @@ pub fn pack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE, E
         .ok_or(Error::EXE(EXEFormatError::TooLong(data.len())))?;
     let e_cs = checked_u16(compressed.len() / 16)
         .ok_or(Error::EXE(EXEFormatError::CompressedTooLong(data.len())))?;
+    // When the decompression stub runs, it will copy itself to a location
+    // higher in memory (past the end of the uncompressed data size) so that the
+    // decompression process doesn't overwrite it while it is running. But we
+    // also have to account for the possibility that the uncompressed data size
+    // lies in the middle of the decompression stub--in that case the stub would
+    // be overwritten while it is running not by the decompression, but by its
+    // own copy operation. The decompression stub knows about this possibility
+    // and will copy itself to the end of uncompressed data or to the end of
+    // itself, whichever is greater. We need to do the same here with regard to
+    // the stack segment, placing it at least exepack_size past whichever
+    // address the stub will copy itself to.
+    // The Microsoft EXEPACK stubs don't handle the latter situation and the
+    // compressor instead refuses to work when it arises: "L1114 file not
+    // suitable for /EXEPACK; relink without".
+    // https://archive.org/details/bitsavers_ibmpcdos15lReferenceJul88_10507385/page/n128?q=EXEPACK
     let e_ss = {
-        let len = work_len + stub_ours.len() + relocations_buffer.len();
+        let len = cmp::max(uncompressed.len(), data.len()) + exepack_size;
         let len = len + (16 - len % 16) % 16;
         // Microsoft EXEPACK puts e_ss at one segment greater.
         checked_u16(len / 16)

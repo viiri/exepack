@@ -29,9 +29,9 @@ signature	equ	16	; unused
 
 ; We use stupid and slow segment:offset addressing. Instead of shifting
 ; segments in attempt to do maximal-length "rep lodsb" and "rep movsb",
-; we call dec_ds_si and dec_es_di in loops. dec_ds_si and dec_es_di in
-; effect canonicalize the segment:offset format so that decrementing
-; never decreases ds or es by more than 1.
+; we call dec_ds_si and dec_es_di in loops. dec_ds_si and dec_es_di
+; normalize the segment:offset format so that decrementing never
+; decreases ds or es by more than 1.
 
 ; On load,
 ; * ds and es are set to the segment of the Program Segment Prefix
@@ -44,32 +44,47 @@ signature	equ	16	; unused
 copy_decompressor_stub:
 	mov bp, ax		; save ax
 
-	mov ax, es
-	add ax, word 0x10	; ax = es:0100 (mem_start, beginning of compressed data)
-	mov bx, ax		; save mem_start, we will use it again during relocation
+	mov bx, es
+	add bx, 0x10		; bx = es+16 (mem_start, 256 bytes past PSP, beginning of compressed data)
 
 	push cs
-	pop ds			; ds = cs (exepack_start)
+	pop ds			; ds = cs (beginning of EXEPACK variables, end of compressed data)
 
-	add ax, [dest_len]
-	mov es, ax		; es = mem_start + dest_len
+	mov cx, [exepack_size]	; cx = size of the EXEPACK block (variables+code+relocations)
 
-	; Copy everything between exepack and the end of relocations to a
-	; location higher in memory, mem_start + dest_len.
-	mov cx, [exepack_size]
-	xor si, si		; ds:si points to the source buffer, exepack_start
-	xor di, di		; es:di points to the destination buffer, mem_start + dest_len
-	rep movsb		; copy
+	; We have to copy the EXEPACK block (ds:0000 to ds:exepack_size)
+	; out of the way, so that it is not overwritten neither during
+	; decompression nor during the copy itself. We set es to the
+	; maximum of mem_start + dest_len (the end of uncompressed data)
+	; and ds + ceil(exepack_size/16) (the end of the EXEPACK block).
+	mov dx, ds
+	mov ax, cx
+	add ax, 15
+	shr ax, 4
+	add ax, dx		; ax = ds + ceil(exepack_size/16)
 
-	push ax			; segment to jump to (mem_start + dest_len)
-	mov ax, decompress
-	push ax			; offset to jump to (i.e., label "decompress" in the copied block of code)
-	retf			; jump to the copied code
+	mov dx, bx
+	add dx, [dest_len]	; dx = mem_start + dest_len
 
-; Decrement ds:si.
+	cmp ax, dx
+	jae .ax_max
+	mov ax, dx
+.ax_max:
+	mov es, ax
+
+	xor si, si		; ds:si points to the source buffer, the EXEPACK block
+	xor di, di		; es:di points to the destination buffer
+	rep movsb		; copy exepack_size bytes from ds:si to es:di
+
+	mov es, dx		; es = mem_start + dest_len (destination for decompression)
+	push ax			; segment to jump to (where we copied the EXEPACK block to)
+	push decompress		; offset to jump to (i.e., label "decompress" in the copied EXEPACK block)
+	retf			; jump into the copied code
+
+; Decrement a normalized ds:si.
 dec_ds_si:
-	sub si, 1
-	jae .si_ok
+	dec si
+	jns .si_ok	; here we assume si was not negative to begin with
 	mov si, ds
 	dec si
 	mov ds, si
@@ -77,10 +92,10 @@ dec_ds_si:
 .si_ok:
 	ret
 
-; Decrement es:di.
+; Decrement a normalized es:di.
 dec_es_di:
-	sub di, 1
-	jae .di_ok
+	dec di
+	jns .di_ok	; here we assume di was not negative to begin with
 	mov di, es
 	dec di
 	mov es, di
@@ -149,7 +164,7 @@ decompress:
 	je .loop		; repeat until (command & 0x01) == 1
 
 	push cs
-	pop ds			; ds = exepack_start
+	pop ds			; ds = beginning of EXEPACK block
 	mov si, relocation_entries	; ds:si points to the beginning of the packed relocation table
 	; dx = current relocation segment (increments by 0x1000)
 	xor dx, dx
@@ -161,14 +176,14 @@ apply_relocations:
 .next_address:			; while (cx > 0)
 	lodsw			; read next relocation offset
 	mov di, ax
-	; Rewrite a pointer of the form X000:abcd as Xabc:000d to avoid
-	; a wraparound problem when the offset is 0xffff.
+	; Normalize the es:di pointer to avoid a wraparound problem when
+	; the offset is 0xffff.
 	and di, 0x000f		; keep the lower 4 bits of the offset
 	shr ax, 4		; shift the upper 12 bits into the segment
 	add ax, bx		; bx is mem_start from the beginning
 	add ax, dx		; dx is current relocation segment
 	mov es, ax		; es:di points to relocation target word
-	add word [es:di], bx	; *target += mem_start
+	add [es:di], bx		; *target += mem_start
 	loop .next_address
 
 .next_segment:
@@ -177,10 +192,10 @@ apply_relocations:
 
 execute_decompressed_program:
 	mov ax, bx		; ax = mem_start
-	mov si, word [real_SS]
+	mov si, [real_SS]
 	add si, ax		; si = relocated real_SS
-	mov di, word [real_SP]	; di = real_SP
-	add word [real_CS], ax	; real_CS = relocated real_CS
+	mov di, [real_SP]	; di = real_SP
+	add [real_CS], ax	; real_CS = relocated real_CS
 	sub ax, 0x10
 	mov ds, ax		; ds = mem_start - 0x10 (start of PSP)
 	mov es, ax		; es = mem_start - 0x10 (start of PSP)
