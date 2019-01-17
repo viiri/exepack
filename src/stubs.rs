@@ -985,6 +985,10 @@ pub const STUB_277: &[u8] = b"\
 ///
 /// - <https://archive.org/download/MicroCom_20_Hog_Bear_Adventure/MicroCom_20_Hog_Bear_Adventure.zip/hogbear.exe>
 ///
+/// LINK.EXE that apparently produces this stub:
+///
+/// - <https://archive.org/download/RevisedJonesAs/Revised%20Jones%20As.iso/LINK.EXE>
+///
 /// NASM source code to make an equivalent of this stub:
 ///
 /// ```nasm,ignore
