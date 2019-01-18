@@ -245,7 +245,6 @@ fn main() {
                 eprintln!();
                 display_unknown_stub(&mut io::stderr(), &exepack_header_buffer, &stub).unwrap();
             }
-            exepack::Error::EXEPACK(_) => eprintln!("Packed file is corrupt: {}", err),
             _ => eprintln!("{}", err),
         }
         process::exit(match err.kind {
