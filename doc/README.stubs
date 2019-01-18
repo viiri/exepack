@@ -23,6 +23,7 @@ error string: the human-readable error message printed out when there is
 		length	skip_len	ax		A20 bug		0xffff bug	expansion	string
 --------------------------------------------------------------------------------------------------------------
 stub_258.asm	258	no		no		yes		yes		no		"Packed file is corrupt"
+stub_258_es.asm	258	no		no		yes		yes		no		"Fichero corrompido    "
 stub_279.asm	279	no		no		yes		no		no		"Packed file is corrupt"
 stub_277.asm	277	no		no		yes		no		no		"Packed file is corrupt"
 stub_283.asm	283	yes		no		yes		no		no		"Packed file is corrupt"
