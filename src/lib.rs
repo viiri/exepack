@@ -1,11 +1,11 @@
 //! Compressor and decompressor for self-extracting DOS executables with
 //! Microsoft EXEPACK.
 //!
-//! There are different versions of the EXEPACK format, with slightly internal
-//! data structures. This program identifies what format is in used by looking
-//! up the executable portion of the file (the "decompression stub") in a table
-//! of known stubs. See the `stubs` module. If the program doesn't recognize a
-//! stub, it can't decompress it.
+//! There are different versions of the EXEPACK format, with slightly different
+//! internal data structures. This program identifies what format is in used by
+//! looking up the executable portion of the file (the "decompression stub") in
+//! a table of known stubs. See the `stubs` module. If the program doesn't
+//! recognize a stub, it can't decompress it.
 //!
 //! One common format is documented at
 //! <http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK#File_Format>.
