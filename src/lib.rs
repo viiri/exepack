@@ -9,14 +9,10 @@
 //!
 //! One common format is documented at
 //! <http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK#File_Format>.
-//! As of 2019-01-06, that page omits the detail that (`skip_len` - 1) must be
-//! subtracted from the destination address as well as the source address—though
-//! in practice it doesn't really matter because all the examples I've seen have
-//! `skip_len` = 1, so the subtraction is a no-op. The format described at that
-//! page is compatible with what is here called `stubs::STUB_283`. Another
-//! format omits the `skip_len` variable completely (changing the size of the
-//! EXEPACK header) and hardcodes an implicit `skip_len` = 1; see
-//! `stubs::STUB_258` for example.
+//! The format described at that page is compatible with what is here called
+//! `stubs::STUB_283`. Another format omits the `skip_len` variable completely
+//! (changing the size of the EXEPACK header) and hardcodes an implicit
+//! `skip_len` = 1; see `stubs::STUB_258` for example.
 //!
 //! # Compression
 //!
