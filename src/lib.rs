@@ -58,6 +58,11 @@ macro_rules! debug {
     };
 }
 
+/// Round `n` up to the next multiple of `m`.
+fn round_up(n: usize, m: usize) -> Option<usize> {
+    n.checked_add((m - n % m) % m)
+}
+
 fn read_u16le<R: Read>(r: &mut R) -> io::Result<u16> {
     let mut buf = [0; 2];
     r.read_exact(&mut buf)?;
@@ -200,7 +205,7 @@ impl fmt::Display for EXEFormatError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             &EXEFormatError::BadMagic(e_magic) => write!(f, "Bad EXE magic 0x{:04x}; expected 0x{:04x}", e_magic, EXE_MAGIC),
-            &EXEFormatError::BadNumPages(e_cb, e_cblp) => write!(f, "Bad EXE size {}×512+{}", e_cb, e_cblp),
+            &EXEFormatError::BadNumPages(e_cb, e_cblp) => write!(f, "Bad EXE size ({}, {})", e_cb, e_cblp),
             &EXEFormatError::HeaderTooShort(e_cparhdr) => write!(f, "EXE header of {} bytes is too small", e_cparhdr as u64 * 16),
             &EXEFormatError::RelocationsOutsideHeader(e_crlc, e_lfarlc) => write!(f, "{} relocations starting at 0x{:04x} lie outside the EXE header", e_crlc, e_lfarlc),
             &EXEFormatError::RelocationsNotSupported(_e_crlc, _e_lfarlc) => write!(f, "relocations before decompression are not supported"),
@@ -711,56 +716,71 @@ pub fn pack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE, E
     let mut input = input.take(exe_header.exe_len().checked_sub(exe_header.header_len()).unwrap());
 
     let mut uncompressed = Vec::new();
+    // The input.take above ensures that we will read no more than 0xffff*512
+    // bytes ≈ 32 MB here.
     input.read_to_end(&mut uncompressed)
         .map_err(|err| annotate_io_error(err, "reading EXE body"))?;
-    // debug!("{:?}", uncompressed);
     // Pad uncompressed to a multiple of 16 bytes.
     {
-        let len = uncompressed.len() + (16 - uncompressed.len() % 16) % 16;
+        let len = round_up(uncompressed.len(), 16).unwrap();
         uncompressed.resize(len, 0x00);
     }
     assert_eq!(uncompressed.len() % 16, 0);
 
     let mut compressed = Vec::new();
     compress(&mut compressed, &uncompressed);
-    // debug!("{:?}", compressed);
     // Pad compressed to a multiple of 16 bytes.
     {
-        let len = compressed.len() + (16 - compressed.len() % 16) % 16;
+        let len = round_up(compressed.len(), 16).unwrap();
         compressed.resize(len, 0xff);
     }
     assert_eq!(compressed.len() % 16, 0);
 
-    let mut data = Vec::new();
-    data.extend(compressed.iter());
+    let stub = stubs::STUB_OURS;
 
     let mut relocations_buffer = Vec::new();
     encode_relocations(&mut relocations_buffer, &relocations)?;
 
-    let stub_ours = stubs::STUB_OURS;
-    let exepack_size = 18 + stub_ours.len() + relocations_buffer.len();
-    // Write the 18-byte EXEPACK header.
+
+    // Now we have the pieces we need. Start putting together the output EXE.
+    // The `data` vec will hold the EXE body (everything after the header).
+    let mut data = Vec::new();
+
+    // Start with the padded, compressed data.
+    data.extend(compressed.iter());
+
+    // Next, the 18-byte EXEPACK header.
+    let exepack_size = (18 as usize)
+        .checked_add(stub.len()).unwrap()
+        .checked_add(relocations_buffer.len()).unwrap();
     for exe_var in [
         exe_header.e_ip,    // real_ip
         exe_header.e_cs,    // real_ip
-        0,                  // mem_start
-        checked_u16(exepack_size)
-            .ok_or(Error::EXEPACK(EXEPACKFormatError::EXEPACKTooLong(exepack_size)))?,  // exepack_size
+        0,                  // mem_start (unused)
+        checked_u16(exepack_size)   // exepack_size
+            .ok_or(Error::EXEPACK(EXEPACKFormatError::EXEPACKTooLong(exepack_size)))?,
         exe_header.e_sp,    // real_sp
         exe_header.e_ss,    // real_ss
-        checked_u16(uncompressed.len() / 16)
-            .ok_or(Error::EXEPACK(EXEPACKFormatError::UncompressedTooLong(uncompressed.len())))?,   // dest_len
+        checked_u16(uncompressed.len() / 16)    // dest_len
+            .ok_or(Error::EXEPACK(EXEPACKFormatError::UncompressedTooLong(uncompressed.len())))?,
         1,                  // skip_len
         EXEPACK_MAGIC,      // signature
     ].iter() {
         push_u16le(&mut data, *exe_var);
     }
 
-    data.extend(stub_ours.iter());
+    // Then the stub itself.
+    data.extend(stub.iter());
+
+    // Finally, the packed relocation table.
     data.extend(relocations_buffer.iter());
 
+
+    // Now that we know how big the output will be, we can build the EXE header.
     let (e_cblp, e_cp) = encode_exe_len(512 + data.len())
         .ok_or(Error::EXE(EXEFormatError::TooLong(data.len())))?;
+    // The code segment points at the EXEPACK header, immediately after the
+    // compressed data.
     let e_cs = checked_u16(compressed.len() / 16)
         .ok_or(Error::EXE(EXEFormatError::CompressedTooLong(data.len())))?;
     // When the decompression stub runs, it will copy itself to a location
@@ -790,13 +810,13 @@ pub fn pack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE, E
         e_cblp: e_cblp,
         e_cp: e_cp,
         e_crlc: 0,
-        e_cparhdr: (512 / 16) as u16,
+        e_cparhdr: (512 / 16) as u16,   // No relocations means a fixed-size EXE header.
         e_minalloc: exe_header.e_minalloc,
         e_maxalloc: exe_header.e_maxalloc,
         e_ss: e_ss,
         e_sp: 128,
         e_csum: 0,
-        e_ip: 18, // Length of the EXEPACK header.
+        e_ip: 18, // Stub begins just after the EXEPACK header.
         e_cs: e_cs,
         e_lfarlc: EXE_HEADER_LEN as u16,
         e_ovno: 0,
