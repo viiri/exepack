@@ -45,7 +45,8 @@ use std::fmt;
 use std::io::{self, Read, Write};
 use std::sync::atomic;
 
-pub mod stubs;
+/// Our pre-assembled decompression stub.
+pub const STUB: &'static [u8; 283] = include!("stub.in");
 
 /// If `DEBUG` is true, the library will print debugging information to stderr.
 pub static DEBUG: atomic::AtomicBool = atomic::AtomicBool::new(false);
@@ -326,7 +327,7 @@ fn test_encode_exe_len() {
 pub enum EXEPACKFormatError {
     UnknownStub(Vec<u8>, Vec<u8>),
     BadMagic(u16),
-    HeaderSizeMismatch(usize, usize),
+    UnknownHeaderLength(usize),
     PaddingTooShort(u16),
     PaddingTooLong(u16),
     EXEPACKTooShort(u16, usize),
@@ -350,8 +351,8 @@ impl fmt::Display for EXEPACKFormatError {
                 write!(f, "Unknown decompression stub"),
             &EXEPACKFormatError::BadMagic(magic) =>
                 write!(f, "EXEPACK header has bad magic 0x{:04x}; expected 0x{:04x}", magic, EXEPACK_MAGIC),
-            &EXEPACKFormatError::HeaderSizeMismatch(header_len, expected_len) =>
-                write!(f, "EXEPACK header is {} bytes, expected {}", header_len, expected_len),
+            &EXEPACKFormatError::UnknownHeaderLength(header_len) =>
+                write!(f, "don't know how to interpret EXEPACK header of {} bytes", header_len),
             &EXEPACKFormatError::PaddingTooShort(skip_len) =>
                 write!(f, "EXEPACK padding length of {} paragraphs is invalid", skip_len),
             &EXEPACKFormatError::PaddingTooLong(skip_len) =>
@@ -736,8 +737,6 @@ pub fn pack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE, E
     }
     assert_eq!(compressed.len() % 16, 0);
 
-    let stub = stubs::STUB_OURS;
-
     let mut relocations_buffer = Vec::new();
     encode_relocations(&mut relocations_buffer, &relocations)?;
 
@@ -751,7 +750,7 @@ pub fn pack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE, E
 
     // Next, the 18-byte EXEPACK header.
     let exepack_size = (18 as usize)
-        .checked_add(stub.len()).unwrap()
+        .checked_add(STUB.len()).unwrap()
         .checked_add(relocations_buffer.len()).unwrap();
     for exe_var in [
         exe_header.e_ip,    // real_ip
@@ -770,7 +769,7 @@ pub fn pack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE, E
     }
 
     // Then the stub itself.
-    data.extend(stub.iter());
+    data.extend(STUB.iter());
 
     // Finally, the packed relocation table.
     data.extend(relocations_buffer.iter());
@@ -906,14 +905,13 @@ struct EXEPACKHeader {
     signature: u16,
 }
 
-fn parse_exepack_header(buf: &[u8], uses_skip_len: bool) -> Result<EXEPACKHeader, EXEPACKFormatError> {
+fn parse_exepack_header(buf: &[u8]) -> Result<EXEPACKHeader, EXEPACKFormatError> {
     let mut r = io::Cursor::new(buf);
-    if !uses_skip_len && buf.len() != 16 {
-        return Err(EXEPACKFormatError::HeaderSizeMismatch(buf.len(), 16));
-    }
-    if uses_skip_len && buf.len() != 18 {
-        return Err(EXEPACKFormatError::HeaderSizeMismatch(buf.len(), 18));
-    }
+    let uses_skip_len = match buf.len() {
+        16 => false,
+        18 => true,
+        _ => return Err(EXEPACKFormatError::UnknownHeaderLength(buf.len())),
+    };
     let real_ip = read_u16le(&mut r).unwrap();
     let real_cs = read_u16le(&mut r).unwrap();
     let _ = read_u16le(&mut r).unwrap(); // Ignore "mem_start".
@@ -939,52 +937,38 @@ fn parse_exepack_header(buf: &[u8], uses_skip_len: bool) -> Result<EXEPACKHeader
     })
 }
 
-/// Like `io::Read::read_exact`, except that it returns the number of bytes read
-/// instead of `io::ErrorKind::UnexpectedEof` when it reaches EOF.
-fn read_up_to<R: Read>(r: &mut R, buf: &mut [u8]) -> io::Result<usize> {
-    let mut total = 0;
-    while total < buf.len() {
-        let n = r.read(&mut buf[total..])?;
-        if n == 0 {
-            break
+/// Read a decompression stub (the executable code following the EXEPACK header
+/// and preceding the packed relocation table). Returns (stub, true) if it finds
+/// a match, or (partial, false) if it reads 512 bytes without a match.
+///
+/// There are many different decompression stubs--see some examples in the doc
+/// directory. What they all have in common is a suffix of
+/// `"\xcd\x21\xb8\xff\x4c\xcd\x21"`--standing for the instructions
+/// `int 0x21; mov ax, 0x4cff; int 0x21`--followed by a 22-byte error string,
+/// most often `"Packed file is corrupt"`.
+fn read_stub<R: Read>(r: &mut R) -> io::Result<(Vec<u8>, bool)> {
+    const SUFFIX: &'static [u8] = b"\xcd\x21\xb8\xff\x4c\xcd\x21";
+    let mut buf = Vec::new();
+    while buf.len() < 512 {
+        {
+            let len = buf.len();
+            buf.push(0);
+            let n = r.read(&mut buf[len..])?;
+            if n == 0 {
+                break;
+            }
+            buf.resize(len + n, 0);
         }
-        total += n;
-    }
-    Ok(total)
-}
-
-/// Read a decompression stub and return both the stub and a boolean indicating
-/// whether the EXEPACK format that the stub implements uses an explicit
-/// skip_len variable or not. It works by incrementally reading and comparing
-/// against a table of known stubs. In the event that there is no match, returns
-/// whatever we have read so far along with `None` for the `skip_len` indicator.
-fn read_stub<R: Read>(r: &mut R) -> io::Result<(Vec<u8>, Option<bool>)> {
-    // Mapping of known stubs to whether they use skip_len. Needs to be sorted
-    // by length.
-    const KNOWN_STUBS: [(&[u8], bool); 6] = [
-        (stubs::STUB_258, false),
-        (stubs::STUB_277, false),
-        (stubs::STUB_279, false),
-        (stubs::STUB_283, true),
-        (stubs::STUB_OURS, true),
-        (stubs::STUB_290, false),
-    ];
-    let mut stub = Vec::new();
-    for &(known_stub, uses_skip_len) in KNOWN_STUBS.iter() {
-        assert!(stub.len() <= known_stub.len());
-        let old_len = stub.len();
-        stub.resize(known_stub.len(), 0);
-        let n = read_up_to(r, &mut stub[old_len..])?;
-        // A short read means no match and we are done.
-        if old_len + n < stub.len() {
-            stub.resize(old_len + n, 0);
-            break;
-        }
-        if &stub == &known_stub {
-            return Ok((stub, Some(uses_skip_len)))
+        if buf.ends_with(SUFFIX) {
+            {
+                let len = buf.len();
+                buf.resize(len+22, 0);
+                r.read_exact(&mut buf[len..])?;
+                return Ok((buf, true));
+            }
         }
     }
-    return Ok((stub, None))
+    Ok((buf, false))
 }
 
 // http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK#Relocation_Table
@@ -1036,43 +1020,23 @@ pub fn unpack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE,
     input.read_exact(&mut work_buffer)
         .map_err(|err| annotate_io_error(err, "reading compressed data"))?;
 
-    // The EXEPACK header starts at cs:0000 and ends at cs:ip. We won't know the
-    // layout of the EXEPACK header (i.e., whether there is a skip_len member)
-    // until after we have read and identified the decompression stub.
+    // The EXEPACK header starts at cs:0000 and ends at cs:ip.
     let mut exepack_header_buffer = vec![0; exe_header.e_ip as usize];
     input.read_exact(&mut exepack_header_buffer)
         .map_err(|err| annotate_io_error(err, "reading EXEPACK header"))?;
-
-    // The decompression stub starts at cs:ip. We incrementally read with
-    // increasing, known stub lengths until we find a match or exhaust the list
-    // of known stubs. What we care about is whether the stub uses an explicit
-    // skip_len in the EXEPACK header, or an implicit skip_len of 1.
-    let (mut stub, uses_skip_len) = read_stub(&mut input)
-        .map_err(|err| annotate_io_error(err, "reading EXEPACK decompression stub"))?;
-    let uses_skip_len = match uses_skip_len {
-        Some(uses_skip_len) => uses_skip_len,
-        None => {
-            // Our decompression stub wasn't in the table. Read some more data
-            // (to have a chance of including "Packed file is corrupt" when the
-            // stub is longer than any we know of) and return an error.
-            let old_len = stub.len();
-            if stub.len() < 512 {
-                stub.resize(512, 0);
-            }
-            let n = read_up_to(&mut input, &mut stub[old_len..]).unwrap_or(0); // Ignore an io::Error here.
-            stub.resize(old_len + n, 0);
-            return Err(Error::EXEPACK(EXEPACKFormatError::UnknownStub(exepack_header_buffer, stub)));
-        }
-    };
-    debug!("using stub of length {}", stub.len());
-
-    // Now that we know what stub we're dealing with, we can interpret the
-    // EXEPACK header.
-    let exepack_header = parse_exepack_header(&exepack_header_buffer, uses_skip_len)?;
+    let exepack_header = parse_exepack_header(&exepack_header_buffer)?;
     if exepack_header.signature != EXEPACK_MAGIC {
         return Err(Error::EXEPACK(EXEPACKFormatError::BadMagic(exepack_header.signature)));
     }
     debug!("{:?}", exepack_header);
+
+    // The decompression stub starts at cs:ip.
+    let (stub, found) = read_stub(&mut input)
+        .map_err(|err| annotate_io_error(err, "reading EXEPACK decompression stub"))?;
+    if !found {
+        return Err(Error::EXEPACK(EXEPACKFormatError::UnknownStub(exepack_header_buffer, stub)));
+    }
+    debug!("found stub of length {}", stub.len());
 
     // The EXEPACK header's exepack_size field contains the length of the
     // EXEPACK header, the decompression stub, and the relocation table all
