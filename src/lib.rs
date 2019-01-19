@@ -335,7 +335,6 @@ pub enum EXEPACKFormatError {
     BogusCommand(usize, u8, usize),
     Gap(usize, usize),
     TooManyEXERelocations(usize),
-    TooManyEXEPACKRelocations(u16, usize),
     UncompressedTooLong(usize),
     RelocationAddrTooLarge(Relocation),
     EXEPACKTooLong(usize),
@@ -372,8 +371,6 @@ impl fmt::Display for EXEPACKFormatError {
                 write!(f, "decompression left a gap of {} unwritten bytes between write index {} and original read index {}", dst - original_src, dst, original_src),
             &EXEPACKFormatError::TooManyEXERelocations(num_relocations) =>
                 write!(f, "too many relocation entries ({}) to represent in an EXE header", num_relocations),
-            &EXEPACKFormatError::TooManyEXEPACKRelocations(segment, num) =>
-                write!(f, "too many relocation entries ({}) to represent in segment {:04x} in the EXEPACK table", num, segment),
             &EXEPACKFormatError::UncompressedTooLong(len) =>
                 write!(f, "uncompressed size {} is too large to represent in an EXEPACK header", len),
             &EXEPACKFormatError::RelocationAddrTooLarge(ref relocation) =>
@@ -677,8 +674,10 @@ fn encode_relocations(buf: &mut Vec<u8>, relocations: &[Relocation]) -> Result<(
         while j < relocations.len() && relocations[j].abs() >> 16 == segment_index {
             j += 1;
         }
-        push_u16le(buf, checked_u16(j - i)
-            .ok_or(Error::EXEPACK(EXEPACKFormatError::TooManyEXEPACKRelocations((i << 12) as u16, j - i)))?);;
+        // The checked_u16 cannot fail; for that to happen, the input EXE must
+        // have contained at least 0x10000 relocations, which is impossible to
+        // represent in the e_crlc field.
+        push_u16le(buf, checked_u16(j - i).unwrap());
         for relocation in relocations[i..j].iter() {
             push_u16le(buf, (relocation.abs() & 0xffff) as u16);
         }
