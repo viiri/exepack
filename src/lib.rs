@@ -328,8 +328,8 @@ pub enum EXEPACKFormatError {
     UnknownStub(Vec<u8>, Vec<u8>),
     BadMagic(u16),
     UnknownHeaderLength(usize),
-    PaddingTooShort(u16),
-    PaddingTooLong(u16),
+    SkipTooShort(u16),
+    SkipTooLong(u16),
     EXEPACKTooShort(u16, usize),
     Crossover(usize, usize),
     SrcOverflow(),
@@ -353,10 +353,10 @@ impl fmt::Display for EXEPACKFormatError {
                 write!(f, "EXEPACK header has bad magic 0x{:04x}; expected 0x{:04x}", magic, EXEPACK_MAGIC),
             &EXEPACKFormatError::UnknownHeaderLength(header_len) =>
                 write!(f, "don't know how to interpret EXEPACK header of {} bytes", header_len),
-            &EXEPACKFormatError::PaddingTooShort(skip_len) =>
-                write!(f, "EXEPACK padding length of {} paragraphs is invalid", skip_len),
-            &EXEPACKFormatError::PaddingTooLong(skip_len) =>
-                write!(f, "EXEPACK padding length of {} paragraphs is too long", skip_len),
+            &EXEPACKFormatError::SkipTooShort(skip_len) =>
+                write!(f, "EXEPACK skip_len of {} paragraphs is invalid", skip_len),
+            &EXEPACKFormatError::SkipTooLong(skip_len) =>
+                write!(f, "EXEPACK skip_len of {} paragraphs is too long", skip_len),
             &EXEPACKFormatError::EXEPACKTooShort(exepack_size, header_and_stub_len) =>
                 write!(f, "EXEPACK size of {} bytes is too short for header and stub of {} bytes", exepack_size, header_and_stub_len),
             &EXEPACKFormatError::Crossover(dst, src) =>
@@ -824,22 +824,27 @@ pub fn pack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE, E
     Ok(EXE{header: new_exe_header, data: data, relocations: Vec::new()})
 }
 
+/// Return a new index after reading up to 16 bytes of 0xff padding from the end
+/// of `buf[..i]`.
+pub fn unpad(buf: &[u8], mut i: usize) -> usize {
+    for _ in 0..16 {
+        if i == 0 {
+            break
+        }
+        if buf[i-1] != 0xff {
+            break
+        }
+        i -= 1;
+    }
+    i
+}
+
 /// The basic decompression loop. The compressed data are read (going backwards)
 /// starting at `src`, and written (also going backwards) back to the same buffer
 /// starting at `dst`.
 ///
 /// <http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK#Decompression_algorithm>
 pub fn decompress(buf: &mut [u8], mut dst: usize, mut src: usize) -> Result<(), EXEPACKFormatError> {
-    // Skip 0xff padding (only up to 16 bytes of it).
-    for _ in 0..16 {
-        if src == 0 {
-            break
-        }
-        if buf[src-1] != 0xff {
-            break
-        }
-        src -= 1;
-    }
     let original_src = src;
     loop {
         if src < original_src && dst < src {
@@ -1055,19 +1060,21 @@ pub fn unpack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE,
     // The skip_len variable is 1 greater than the number of paragraphs of
     // padding between the compressed data and the EXEPACK header. It cannot be
     // 0 because that would mean −1 paragraphs of padding.
-    let padding_len = 16 * (exepack_header.skip_len as usize).checked_sub(1)
-        .ok_or(Error::EXEPACK(EXEPACKFormatError::PaddingTooShort(exepack_header.skip_len)))?;
-    let compressed_len = work_buffer.len().checked_sub(padding_len)
-        .ok_or(Error::EXEPACK(EXEPACKFormatError::PaddingTooLong(exepack_header.skip_len)))?;
+    let skip_len = 16 * (exepack_header.skip_len as usize).checked_sub(1)
+        .ok_or(Error::EXEPACK(EXEPACKFormatError::SkipTooShort(exepack_header.skip_len)))?;
+    let compressed_len = work_buffer.len().checked_sub(skip_len)
+        .ok_or(Error::EXEPACK(EXEPACKFormatError::SkipTooLong(exepack_header.skip_len)))?;
     // It's weird that skip_len applies to the *un*compressed length as well,
     // but it does (see the disassembly in stubs.rs). Why didn't they just make
     // data_len that much smaller?
-    let uncompressed_len = (exepack_header.dest_len as usize * 16).checked_sub(padding_len)
-        .ok_or(Error::EXEPACK(EXEPACKFormatError::PaddingTooLong(exepack_header.skip_len)))?;
+    let uncompressed_len = (exepack_header.dest_len as usize * 16).checked_sub(skip_len)
+        .ok_or(Error::EXEPACK(EXEPACKFormatError::SkipTooLong(exepack_header.skip_len)))?;
     // Expand the buffer to hold the uncompressed data.
     if uncompressed_len > compressed_len {
         work_buffer.resize(uncompressed_len, 0);
     }
+    // Remove 0xff padding.
+    let compressed_len = unpad(&work_buffer, compressed_len);
     // Now let's actually decompress the buffer.
     decompress(&mut work_buffer, uncompressed_len, compressed_len)?;
     // Decompression might have shrunk the input; trim the buffer if so.
