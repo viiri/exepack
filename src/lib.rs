@@ -104,35 +104,35 @@ fn annotate_io_error(err: io::Error, msg: &str) -> io::Error {
     io::Error::new(err.kind(), format!("{}: {}", msg, err))
 }
 
-const EXE_MAGIC: u16 = 0x5a4d; // "MZ"
+pub const EXE_MAGIC: u16 = 0x5a4d; // "MZ"
 // The length of an EXE header excluding the variable-sized padding.
-const EXE_HEADER_LEN: u64 = 28;
+pub const EXE_HEADER_LEN: u64 = 28;
 
 #[derive(Debug)]
 pub struct EXE {
-    header: EXEHeader,
-    data: Vec<u8>,
-    relocations: Vec<Relocation>,
+    pub header: EXEHeader,
+    pub data: Vec<u8>,
+    pub relocations: Vec<Relocation>,
 }
 
 // http://www.delorie.com/djgpp/doc/exe/
 // This is a form of IMAGE_DOS_HEADER from <winnt.h>.
 #[derive(Debug)]
 pub struct EXEHeader {
-    e_magic: u16,
-    e_cblp: u16,
-    e_cp: u16,
-    e_crlc: u16,
-    e_cparhdr: u16,
-    e_minalloc: u16,
-    e_maxalloc: u16,
-    e_ss: u16,
-    e_sp: u16,
-    e_csum: u16,
-    e_ip: u16,
-    e_cs: u16,
-    e_lfarlc: u16,
-    e_ovno: u16,
+    pub e_magic: u16,
+    pub e_cblp: u16,
+    pub e_cp: u16,
+    pub e_crlc: u16,
+    pub e_cparhdr: u16,
+    pub e_minalloc: u16,
+    pub e_maxalloc: u16,
+    pub e_ss: u16,
+    pub e_sp: u16,
+    pub e_csum: u16,
+    pub e_ip: u16,
+    pub e_cs: u16,
+    pub e_lfarlc: u16,
+    pub e_ovno: u16,
 }
 
 impl EXEHeader {
@@ -151,8 +151,8 @@ impl EXEHeader {
 
 #[derive(Debug, Copy, Clone)]
 pub struct Relocation {
-    segment: u16,
-    offset: u16,
+    pub segment: u16,
+    pub offset: u16,
 }
 
 impl Relocation {
@@ -188,6 +188,7 @@ impl cmp::PartialEq for Relocation {
 impl cmp::Eq for Relocation {
 }
 
+#[derive(Debug)]
 pub enum EXEFormatError {
     BadMagic(u16),
     BadNumPages(u16, u16),
@@ -298,7 +299,7 @@ fn read_and_check_exe_header<R: Read>(r: &mut R) -> Result<(EXEHeader, Vec<Reloc
 /// Return a tuple `(e_cblp, e_cp)` that encodes len as appropriate for the
 /// so-named EXE header fields. Returns None if the size is too large to be
 /// represented (> 0x1fffe00).
-fn encode_exe_len(len: usize) -> Option<(u16, u16)> {
+pub fn encode_exe_len(len: usize) -> Option<(u16, u16)> {
     let e_cp = (len + 511) / 512;
     if e_cp > 0xffff {
         None
@@ -381,6 +382,7 @@ impl fmt::Display for EXEPACKFormatError {
     }
 }
 
+#[derive(Debug)]
 pub enum Error {
     Io(io::Error),
     EXE(EXEFormatError),
