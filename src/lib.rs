@@ -245,6 +245,9 @@ struct EXEHeader {
 
 impl EXEHeader {
     pub fn exe_len(&self) -> u64 {
+        if self.e_cp == 0 && self.e_cblp == 0 {
+            return 0;
+        }
         if self.e_cp == 0 || self.e_cblp >= 512 {
             panic!("nonsense exe len e_cp={} e_cblp={}", self.e_cp, self.e_cblp);
         }
@@ -307,7 +310,7 @@ fn read_and_check_exe_header<R: Read>(r: &mut R) -> Result<(EXEHeader, Vec<Point
     }
 
     // Consistency of e_cp and e_cblp.
-    if header.e_cp == 0 || header.e_cblp >= 512 {
+    if (header.e_cp == 0 && header.e_cblp != 0) || header.e_cblp >= 512 {
         return Err(Error::EXE(EXEFormatError::BadNumPages(header.e_cp, header.e_cblp)));
     }
     if header.exe_len() < header.header_len() {
@@ -395,10 +398,10 @@ pub fn read_exe<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EX
     // beyond the length of the EXE file stated in the header.
     let input = &mut trim_input_from_header(input, &header, file_len_hint);
 
-    let mut body: Vec<u8> = Vec::new();
     // The trim_input_from_header above ensures that we will read no more than
     // 0xffff*512 bytes < 32 MB here.
-    input.read_to_end(&mut body)
+    let mut body = vec![0; header.exe_len().checked_sub(header.header_len()).unwrap() as usize];
+    input.read_exact(&mut body)
         .map_err(|err| annotate_io_error(err, "reading EXE body"))?;
 
     Ok(EXE {
