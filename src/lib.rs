@@ -8,11 +8,8 @@
 //! recognize a stub, it can't decompress it.
 //!
 //! One common format is documented at
-//! <http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK#File_Format>.
-//! The format described at that page is compatible with what is here called
-//! `stubs::STUB_283`. Another format omits the `skip_len` variable completely
-//! (changing the size of the EXEPACK header) and hardcodes an implicit
-//! `skip_len` = 1; see `stubs::STUB_258` for example.
+//! <http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK#File_Format>. See
+//! doc/README.stubs for other formats that this program can deal with.
 //!
 //! # Compression
 //!
@@ -56,7 +53,7 @@ macro_rules! debug {
         if DEBUG.load(atomic::Ordering::Relaxed) {
             eprintln!($($x)*);
         }
-    };
+    }
 }
 
 /// Round `n` up to the next multiple of `m`.
@@ -718,7 +715,7 @@ pub fn pack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE, E
 
     let mut uncompressed = Vec::new();
     // The input.take above ensures that we will read no more than 0xffff*512
-    // bytes ≈ 32 MB here.
+    // bytes < 32 MB here.
     input.read_to_end(&mut uncompressed)
         .map_err(|err| annotate_io_error(err, "reading EXE body"))?;
     // Pad uncompressed to a multiple of 16 bytes.
@@ -800,7 +797,6 @@ pub fn pack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE, E
     let e_ss = {
         let len = cmp::max(uncompressed.len(), data.len()) + exepack_size;
         let len = len + (16 - len % 16) % 16;
-        // Microsoft EXEPACK puts e_ss at one segment greater.
         checked_u16(len / 16)
             .ok_or(Error::EXE(EXEFormatError::SSTooLarge(len)))?
     };
