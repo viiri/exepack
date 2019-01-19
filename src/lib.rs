@@ -323,7 +323,7 @@ fn test_encode_exe_len() {
     assert_eq!(encode_exe_len(512*0xffff+1), None);
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum EXEPACKFormatError {
     UnknownStub(Vec<u8>, Vec<u8>),
     BadMagic(u16),
@@ -824,10 +824,10 @@ pub fn pack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE, E
     Ok(EXE{header: new_exe_header, data: data, relocations: Vec::new()})
 }
 
-/// Return a new index after reading up to 16 bytes of 0xff padding from the end
+/// Return a new index after reading up to 15 bytes of 0xff padding from the end
 /// of `buf[..i]`.
 pub fn unpad(buf: &[u8], mut i: usize) -> usize {
-    for _ in 0..16 {
+    for _ in 0..15 {
         if i == 0 {
             break
         }
@@ -848,8 +848,9 @@ pub fn decompress(buf: &mut [u8], mut dst: usize, mut src: usize) -> Result<(), 
     let original_src = src;
     loop {
         if src < original_src && dst < src {
-            // The command we're about to read was overwritten. This is allowed
-            // to happen on the first iteration, before we've written anything.
+            // The byte we're about to read--or one of the bytes farther down
+            // the line--was overwritten. This is allowed to happen on the first
+            // iteration, before we've written anything.
             return Err(EXEPACKFormatError::Crossover(dst, src))
         }
         // Read the command byte.
@@ -873,7 +874,7 @@ pub fn decompress(buf: &mut [u8], mut dst: usize, mut src: usize) -> Result<(), 
             }
             0xb2 => {
                 // debug!("0x{:02x} copy {}", command, length);
-                src = src.checked_sub(length).ok_or(EXEPACKFormatError::CopyOverflow(dst, src, command, length))?;
+                src = src.checked_sub(length).ok_or(EXEPACKFormatError::SrcOverflow())?;
                 dst = dst.checked_sub(length).ok_or(EXEPACKFormatError::CopyOverflow(dst, src, command, length))?;
                 for i in 0..length {
                     buf[dst+length-i-1] = buf[src+length-i-1];
