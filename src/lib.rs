@@ -500,12 +500,8 @@ pub fn compress(output: &mut Vec<u8>, input: &[u8]) {
     // we could re-use the 2 bytes cc 06 and compress as
     //      cc 06 00 b1
 
-    // This is the maximum length we allow for any single C or F command.
-    // Because the field is a u16, it may seem we can go up to 0xffff, but the
-    // segment:offset addressing used by the in-executable decompression routine
-    // means that we are only guaranteed to have 0xfff0 bytes in the same
-    // segment.
-    const MAX_LEN: u16 = 0xfff0;
+    // The longest length of any command.
+    const MAX_LEN: u16 = 0xffff;
 
     // Stage 1: build the tables of costs and command lengths for each input
     // position.
