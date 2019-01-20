@@ -1029,6 +1029,31 @@ fn read_relocations<R: Read>(r: &mut R) -> io::Result<Vec<Pointer>> {
     Ok(relocations)
 }
 
+/// Return a new `EXEHeader` that is the same as `exe.header`, only with the
+/// fields `e_cblp`, `e_cp`, `e_crlc`, `e_cparhdr`, and `e_lfarlc` adjusted
+/// according to the length of `exe.data` and the number of relocations in
+/// `exe.relocations`. Sets `e_csum` to zero.
+fn adjust_exe_header(header: &EXEHeader, data_len: usize, num_relocations: usize)
+    -> Result<EXEHeader, Error>
+{
+    // http://www.delorie.com/djgpp/doc/exe/: "Note that some OSs and/or
+    // programs may fail if the header is not a multiple of 512 bytes."
+    let num_header_pages = ((EXE_HEADER_LEN as usize + 4 * num_relocations) + 511) / 512;
+    let (e_cblp, e_cp) = encode_exe_len(num_header_pages * 512 + data_len)
+        .ok_or(Error::EXE(EXEFormatError::TooLong(num_header_pages * 512 + data_len)))?;
+    let e_crlc = checked_u16(num_relocations)
+        .ok_or(Error::EXEPACK(EXEPACKFormatError::TooManyEXERelocations(num_relocations)))?;
+    Ok(EXEHeader {
+        e_cblp: e_cblp,
+        e_cp: e_cp,
+        e_crlc: e_crlc,
+        e_cparhdr: (num_header_pages * 512 / 16) as u16,
+        e_csum: 0,
+        e_lfarlc: EXE_HEADER_LEN as u16,
+        ..*header
+    })
+}
+
 /// Unpack an input executable and return the elements of an unpacked executable.
 /// `file_len_hint` is an optional externally provided hint of the file's total
 /// length, which we use to emit a warning when it exceeds the length stated in
@@ -1117,29 +1142,24 @@ pub fn unpack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE,
     // would be ignored by the EXEPACK decompression stub.
 
     // Finally, construct a new EXE.
-    // Pad the header to the smallest multiple of 512 bytes that holds both the
-    // EXEHeader struct and all the relocations (each relocation is 4 bytes).
-    let num_header_pages = ((EXE_HEADER_LEN as usize + 4 * relocations.len()) + 511) / 512;
-    let (e_cblp, e_cp) = encode_exe_len(num_header_pages * 512 + uncompressed_len)
-        .ok_or(Error::EXE(EXEFormatError::TooLong(num_header_pages * 512 + uncompressed_len)))?;
-    let e_crlc = checked_u16(relocations.len())
-        .ok_or(Error::EXEPACK(EXEPACKFormatError::TooManyEXERelocations(relocations.len())))?;
-    let new_exe_header = EXEHeader{
-        e_magic: EXE_MAGIC,
-        e_cblp: e_cblp,
-        e_cp: e_cp,
-        e_crlc: e_crlc,
-        e_cparhdr: (num_header_pages * 512 / 16) as u16,
-        e_minalloc: exe_header.e_minalloc,
-        e_maxalloc: exe_header.e_maxalloc,
-        e_ss: exepack_header.real_ss,
-        e_sp: exepack_header.real_sp,
-        e_csum: 0,
-        e_ip: exepack_header.real_ip,
-        e_cs: exepack_header.real_cs,
-        e_lfarlc: EXE_HEADER_LEN as u16,
-        e_ovno: 0,
-    };
+    let new_exe_header = adjust_exe_header(
+        &EXEHeader{
+            e_magic: EXE_MAGIC,
+            e_cblp: 0,      // will be fixed by adjust_exe_header
+            e_cp: 0,        // will be fixed by adjust_exe_header
+            e_crlc: 0,      // will be fixed by adjust_exe_header
+            e_cparhdr: 0,   // will be fixed by adjust_exe_header
+            e_minalloc: exe_header.e_minalloc,
+            e_maxalloc: exe_header.e_maxalloc,
+            e_ss: exepack_header.real_ss,
+            e_sp: exepack_header.real_sp,
+            e_csum: 0,
+            e_ip: exepack_header.real_ip,
+            e_cs: exepack_header.real_cs,
+            e_lfarlc: 0,    // will be fixed by adjust_exe_header
+            e_ovno: 0,
+        }, work_buffer.len(), relocations.len()
+    )?;
     debug!("{:?}", new_exe_header);
     Ok(EXE{header: new_exe_header, data: work_buffer, relocations})
 }
@@ -1172,24 +1192,24 @@ fn write_exe_relocations<W: Write>(w: &mut W, relocations: &[Pointer]) -> io::Re
     Ok(n)
 }
 
-/// Serialize an `EXE` structure to `w`. Returns the number of bytes written.
-pub fn write_exe<W: Write>(w: &mut W, exe: &EXE) -> io::Result<usize> {
-    let mut n = 0;
-    n += write_exe_header(w, &exe.header)
-        .map_err(|err| {debug!("annotate"); annotate_io_error(err, "writing EXE header")})?;
+/// Serialize an `EXE` structure to `w`. Ignores the `e_cblp`, `e_cp`, `e_crlc`,
+/// `e_cparhdr`, and `e_lfarlc` fields, instead using value that make sense for
+/// the length of `exe.data` and the number of relocations in `exe.relocations`.
+pub fn write_exe<W: Write>(w: &mut W, exe: &EXE) -> Result<u64, Error> {
+    let header = adjust_exe_header(&exe.header, exe.data.len(), exe.relocations.len())?;
+    let mut n: u64 = 0;
+    n += write_exe_header(w, &header)
+        .map_err(|err| {debug!("annotate"); annotate_io_error(err, "writing EXE header")})? as u64;
     n += write_exe_relocations(w, &exe.relocations)
-        .map_err(|err| annotate_io_error(err, "writing EXE relocations"))?;
-    // http://www.delorie.com/djgpp/doc/exe/: "Note that some OSs and/or
-    // programs may fail if the header is not a multiple of 512 bytes." The
-    // unpack function has already added the necessary amounts to e_cblp and
-    // e_cp, expecting us to do this padding here.
-    while n % 512 != 0 {
+        .map_err(|err| annotate_io_error(err, "writing EXE relocations"))? as u64;
+    assert!(n <= header.header_len());
+    while n < header.header_len() {
         let zeroes = [0; 16];
-        n += w.write(&zeroes[0..cmp::min(512 - n%512, zeroes.len())])
-            .map_err(|err| annotate_io_error(err, "writing EXE header padding"))?;
+        n += w.write(&zeroes[0..cmp::min((header.header_len() - n) as usize, zeroes.len())])
+            .map_err(|err| annotate_io_error(err, "writing EXE header padding"))? as u64;
     }
     w.write_all(&exe.data)
         .map_err(|err| annotate_io_error(err, "writing EXE body"))?;
-    n += exe.data.len();
+    n += exe.data.len() as u64;
     Ok(n)
 }

@@ -48,7 +48,7 @@ impl fmt::Display for TopLevelError {
     }
 }
 
-fn write_exe_file<P: AsRef<Path>>(path: P, exe: &exepack::EXE) -> io::Result<usize> {
+fn write_exe_file<P: AsRef<Path>>(path: P, exe: &exepack::EXE) -> Result<u64, exepack::Error> {
     let f = File::create(&path)?;
     let mut f = io::BufWriter::new(f);
     let n = exepack::write_exe(&mut f, exe)?;
@@ -75,7 +75,7 @@ fn compress_mode<P: AsRef<Path>>(input_path: P, output_path: P) -> Result<(), To
     if let Err(err) = write_exe_file(&output_path, &exe) {
         return Err(TopLevelError {
             path: Some(output_path.as_ref().to_path_buf()),
-            kind: exepack::Error::Io(err),
+            kind: err,
         });
     }
 
@@ -101,7 +101,7 @@ fn decompress_mode<P: AsRef<Path>>(input_path: P, output_path: P) -> Result<(), 
     if let Err(err) = write_exe_file(&output_path, &exe) {
         return Err(TopLevelError {
             path: Some(output_path.as_ref().to_path_buf()),
-            kind: exepack::Error::Io(err),
+            kind: err,
         });
     }
 

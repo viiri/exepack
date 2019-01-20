@@ -67,15 +67,16 @@ fn make_incompressible_exe(body_len: usize, num_relocations: usize) -> exepack::
     make_exe(incompressible_body(body_len), make_relocations(num_relocations))
 }
 
-fn save_exe<P: AsRef<path::Path>>(path: P, exe: &exepack::EXE) -> io::Result<()> {
+fn save_exe<P: AsRef<path::Path>>(path: P, exe: &exepack::EXE) -> Result<(), exepack::Error> {
     let f = fs::File::create(path)?;
     let mut w = io::BufWriter::new(f);
     exepack::write_exe(&mut w, exe)?;
-    w.flush()
+    w.flush()?;
+    Ok(())
 }
 
 // call save_exe if SAVE_EXES is true
-fn maybe_save_exe<P: AsRef<path::Path>>(path: P, exe: &exepack::EXE) -> io::Result<()> {
+fn maybe_save_exe<P: AsRef<path::Path>>(path: P, exe: &exepack::EXE) -> Result<(), exepack::Error> {
     if SAVE_EXES {
         save_exe(path, exe)?;
     }
