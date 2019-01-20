@@ -297,6 +297,56 @@ fn read_and_check_exe_header<R: Read>(r: &mut R) -> Result<(EXEHeader, Vec<Point
     Ok((exe_header, relocations))
 }
 
+// The EXE header contains a limit to the overall length of the EXE file in the
+// e_cblp and e_cp fields. This function trims an io::Read to limit it to the
+// length specified in the header, assuming that the header (including
+// relocations and padding) has already been read. file_len_hint is an optional
+// externally provided hint of the input file's total length, which we use to
+// emit a warning when it exceeds the length stated in the EXE header. Panics if
+// the EXE length is less than the header length (which cannot happen if the
+// header was returned from read_and_check_exe_header).
+fn trim_input_from_header<R: Read>(
+    input: R,
+    header: &EXEHeader,
+    file_len_hint: Option<u64>
+) -> io::Take<R> {
+    if let Some(file_len) = file_len_hint {
+        // The EXE file length is allowed to be smaller than the length of the
+        // file containing it. Emit a warning that we are ignoring trailing
+        // garbage. The opposite situation, exe_len > file_len, is an error that
+        // we will notice later when we get an unexpected EOF.
+        if header.exe_len() < file_len {
+            eprintln!("warning: EXE file size is {}; ignoring {} trailing bytes", file_len, file_len - header.exe_len());
+        }
+    }
+    input.take(header.exe_len().checked_sub(header.header_len()).unwrap())
+}
+
+/// Read an EXE file.
+/// `file_len_hint` is an optional externally provided hint of
+/// the input file's total length, which we use to emit a warning when it
+/// exceeds the length stated in the EXE header.
+pub fn read_exe<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE, Error> {
+    let (header, relocations) = read_and_check_exe_header(input)?;
+    debug!("{:?}", relocations);
+
+    // Now we are positioned just after the EXE header. Trim any data that lies
+    // beyond the length of the EXE file stated in the header.
+    let mut input = trim_input_from_header(input, &header, file_len_hint);
+
+    let mut data: Vec<u8> = Vec::new();
+    // The input.take above ensures that we will read no more than 0xffff*512
+    // bytes < 32 MB here.
+    input.read_to_end(&mut data)
+        .map_err(|err| annotate_io_error(err, "reading EXE body"))?;
+
+    Ok(EXE {
+        header: header,
+        data: data,
+        relocations: relocations,
+    })
+}
+
 /// Return a tuple `(e_cblp, e_cp)` that encodes len as appropriate for the
 /// so-named EXE header fields. Returns None if the size is too large to be
 /// represented (> 0x1fffe00).
@@ -693,29 +743,9 @@ fn encode_relocations(buf: &mut Vec<u8>, relocations: &[Pointer]) -> Result<(), 
 /// total length, which we use to emit a warning when it exceeds the length
 /// stated in the EXE header.
 pub fn pack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE, Error> {
-    let (exe_header, relocations) = read_and_check_exe_header(input)?;
-    debug!("{:?}", relocations);
+    let exe = read_exe(input, file_len_hint)?;
 
-    // Now we are positioned just after the EXE header. Trim any data that lies
-    // beyond the length of the EXE file stated in the header.
-    if let Some(file_len) = file_len_hint {
-        // The EXE file length is allowed to be smaller than the length of the
-        // file containing it. Emit a warning that we are ignoring trailing
-        // garbage. The opposite situation, exe_len > file_len, is an error that
-        // we will notice later when we get an unexpected EOF.
-        if exe_header.exe_len() < file_len {
-            eprintln!("warning: EXE file size is {}; ignoring {} trailing bytes", file_len, file_len - exe_header.exe_len());
-        }
-    }
-    // The subtraction `exe_len - header_len` can't fail. It's one of the things
-    // that `read_and_check_exe_header` checks.
-    let mut input = input.take(exe_header.exe_len().checked_sub(exe_header.header_len()).unwrap());
-
-    let mut uncompressed = Vec::new();
-    // The input.take above ensures that we will read no more than 0xffff*512
-    // bytes < 32 MB here.
-    input.read_to_end(&mut uncompressed)
-        .map_err(|err| annotate_io_error(err, "reading EXE body"))?;
+    let mut uncompressed = exe.data;
     // Pad uncompressed to a multiple of 16 bytes.
     {
         let len = round_up(uncompressed.len(), 16).unwrap();
@@ -733,7 +763,7 @@ pub fn pack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE, E
     assert_eq!(compressed.len() % 16, 0);
 
     let mut relocations_buffer = Vec::new();
-    encode_relocations(&mut relocations_buffer, &relocations)?;
+    encode_relocations(&mut relocations_buffer, &exe.relocations)?;
 
 
     // Now we have the pieces we need. Start putting together the output EXE.
@@ -748,13 +778,13 @@ pub fn pack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE, E
         .checked_add(STUB.len()).unwrap()
         .checked_add(relocations_buffer.len()).unwrap();
     for exe_var in [
-        exe_header.e_ip,    // real_ip
-        exe_header.e_cs,    // real_ip
+        exe.header.e_ip,    // real_ip
+        exe.header.e_cs,    // real_ip
         0,                  // mem_start (unused)
         checked_u16(exepack_size)   // exepack_size
             .ok_or(Error::EXEPACK(EXEPACKFormatError::EXEPACKTooLong(exepack_size)))?,
-        exe_header.e_sp,    // real_sp
-        exe_header.e_ss,    // real_ss
+        exe.header.e_sp,    // real_sp
+        exe.header.e_ss,    // real_ss
         checked_u16(uncompressed.len() / 16)    // dest_len
             .ok_or(Error::EXEPACK(EXEPACKFormatError::UncompressedTooLong(uncompressed.len())))?,
         1,                  // skip_len
@@ -816,8 +846,8 @@ pub fn pack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE, E
         e_cp: e_cp,
         e_crlc: 0,
         e_cparhdr: (512 / 16) as u16,   // No relocations means a fixed-size EXE header.
-        e_minalloc: exe_header.e_minalloc,
-        e_maxalloc: exe_header.e_maxalloc,
+        e_minalloc: exe.header.e_minalloc,
+        e_maxalloc: exe.header.e_maxalloc,
         e_ss: e_ss,
         e_sp: e_sp,
         e_csum: 0,
@@ -1012,18 +1042,7 @@ pub fn unpack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE,
 
     // Now we are positioned just after the EXE header. Trim any data that lies
     // beyond the length of the EXE file stated in the header.
-    if let Some(file_len) = file_len_hint {
-        // The EXE file length is allowed to be smaller than the length of the
-        // file containing it. Emit a warning that we are ignoring trailing
-        // garbage. The opposite situation, exe_len > file_len, is an error that
-        // we will notice later when we get an unexpected EOF.
-        if exe_header.exe_len() < file_len {
-            eprintln!("warning: EXE file size is {}; ignoring {} trailing bytes", file_len, file_len - exe_header.exe_len());
-        }
-    }
-    // The subtraction `exe_len - header_len` can't fail. It's one of the things
-    // that `read_and_check_exe_header` checks.
-    let mut input = input.take(exe_header.exe_len().checked_sub(exe_header.header_len()).unwrap());
+    let mut input = trim_input_from_header(input, &exe_header, file_len_hint);
 
     // Compressed data starts immediately after the EXE header and ends at
     // cs:0000. We will decompress into the very same buffer (after expanding
