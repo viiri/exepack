@@ -776,7 +776,7 @@ pub fn pack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE, E
     // The code segment points at the EXEPACK header, immediately after the
     // compressed data.
     let e_cs = checked_u16(compressed.len() / 16)
-        .ok_or(Error::EXE(EXEFormatError::CompressedTooLong(data.len())))?;
+        .ok_or(Error::EXE(EXEFormatError::CompressedTooLong(compressed.len())))?;
     // When the decompression stub runs, it will copy itself to a location
     // higher in memory (past the end of the uncompressed data size) so that the
     // decompression process doesn't overwrite it while it is running. But we
