@@ -6,3 +6,15 @@ https://github.com/horsicq/Detect-It-Easy/blob/master/db/MSDOS/WordPerfect%20EXE
 
 https://www.classicdosgames.com/compression/exepack.html
 "2nd generation"
+
+== Open questions
+
+Is truncating the input according to e_cblp and c_cp the right thing to do?
+Or should we rather just read to the file's natural EOF?
+Currently we truncate with a warning.
+
+Should we be checking the EXE checksum, when nonzero?
+It's a bit awkward because you have to read to the end of the file.
+
+Do we need to increase e_minalloc and e_maxalloc to account for
+the extra memory to which the EXEPACK block copies itself?
