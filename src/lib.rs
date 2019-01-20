@@ -93,7 +93,7 @@ fn discard<R: io::Read>(r: &mut R, mut n: u64) -> io::Result<()> {
     let mut buf = [0; 256];
     while n > 0 {
         let len = cmp::min(n, buf.len() as u64);
-        r.read(&mut buf[0..len as usize])?;
+        r.read_exact(&mut buf[0..len as usize])?;
         n = n.checked_sub(len as u64).unwrap();
     }
     Ok(())
