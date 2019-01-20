@@ -1,3 +1,6 @@
+// One thing we don't test: whether the self-extracting EXE actually works as an
+// executable. For that, you have to load it up in DOSBox or something.
+
 extern crate exepack;
 
 use std::fs;
@@ -90,6 +93,15 @@ fn pack(source: &exepack::EXE) -> Result<exepack::EXE, exepack::Error> {
     exepack::write_exe(&mut f, source).unwrap();
     f.seek(io::SeekFrom::Start(0)).unwrap();
     exepack::pack(&mut f, None)
+}
+
+// a version of exepack::unpack that works from a source EXE rather than an
+// io::Read, with no size hint.
+fn unpack(source: &exepack::EXE) -> Result<exepack::EXE, exepack::Error> {
+    let mut f = io::Cursor::new(Vec::new());
+    exepack::write_exe(&mut f, source).unwrap();
+    f.seek(io::SeekFrom::Start(0)).unwrap();
+    exepack::unpack(&mut f, None)
 }
 
 #[test]
@@ -234,4 +246,73 @@ fn test_pack_lengths() {
     let exe = make_incompressible_exe(len, num_relocations+1);
     maybe_save_exe("tests/maxlen_maxrelocs+1_incompressible.exe", &exe).unwrap();
     want_error!(pack(&exe));
+}
+
+// We don't ask for perfect identity in comparing EXEs. The packing/unpacking
+// roundtrip may change the size of the header, and may add padding to the end
+// of the body. The location of the relocation table may change. We don't check
+// the checksums.
+fn check_exes_equivalent(count: usize, a: &exepack::EXE, b: &exepack::EXE) {
+    // Let a be the one with the shorter body.
+    let (a, b) = if a.data.len() <= b.data.len() {
+        (a, b)
+    } else {
+        (b, a)
+    };
+
+    assert_eq!(a.header.e_magic, b.header.e_magic, "{}", count);
+    // skip e_cblp, handled below
+    // skip e_cp, handled below
+    assert_eq!(a.header.e_crlc, b.header.e_crlc, "{}", count);
+    // skip e_cparhdr, handled below
+    assert_eq!(a.header.e_minalloc, b.header.e_minalloc, "{}", count);
+    assert_eq!(a.header.e_maxalloc, b.header.e_maxalloc, "{}", count);
+    assert_eq!(a.header.e_ss, b.header.e_ss, "{}", count);
+    assert_eq!(a.header.e_sp, b.header.e_sp, "{}", count);
+    // ignore e_csum
+    assert_eq!(a.header.e_ip, b.header.e_ip, "{}", count);
+    assert_eq!(a.header.e_cs, b.header.e_cs, "{}", count);
+    // ignore e_lfarlc
+    assert_eq!(a.header.e_ovno, b.header.e_ovno, "{}", count);
+
+    let diff = (b.data.len() as isize).checked_sub(a.data.len() as isize).unwrap();
+    // should not add more than 15 bytes of padding
+    assert!(0 <= diff && diff < 16, "{} {} {}", a.data.len(), b.data.len(), count);
+    let (b_data, b_padding) = b.data.split_at(a.data.len());
+    // data up to padding must be identical
+    assert_eq!(a.data, b_data, "{}", count);
+    // padding must be zeroed
+    for c in b_padding {
+        assert_eq!(*c, 0x00, "{:?} {}", b_padding, count);
+    }
+
+    // relocations must be identical
+    let mut a_relocs = a.relocations.clone();
+    a_relocs.sort();
+    let mut b_relocs = a.relocations.clone();
+    b_relocs.sort();
+    assert_eq!(a_relocs, b_relocs, "{}", count);
+}
+
+fn pack_roundtrip_count(count: usize, max: usize, exe: exepack::EXE) -> exepack::EXE {
+    if count + 1 > max {
+        return exe;
+    }
+    let packed = pack_roundtrip_count(count + 1, max, pack(&exe).unwrap());
+    maybe_save_exe(format!("tests/hello_roundtrip_{}.packed.exe", count + 1), &packed).unwrap();
+    let unpacked = unpack(&packed).unwrap();
+    maybe_save_exe(format!("tests/hello_roundtrip_{}.unpacked.exe", count), &unpacked).unwrap();
+    check_exes_equivalent(count, &exe, &unpacked);
+    unpacked
+}
+
+// test that compressing and re-compressing, then decompressing and
+// re-decompressing, gives equivalent results all the way down and up the chain.
+#[test]
+fn test_pack_roundtrip() {
+    let exe = {
+        let mut f = fs::File::open("tests/hello.exe").unwrap();
+        exepack::read_exe(&mut f, None).unwrap()
+    };
+    pack_roundtrip_count(0, 9, exe);
 }
