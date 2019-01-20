@@ -12,10 +12,6 @@ use std::path;
 // so you can examine/test them externally.
 const SAVE_EXES: bool = true;
 
-fn round_up(n: usize, m: usize) -> usize {
-    n.checked_add((m - n % m) % m).unwrap()
-}
-
 // generate a body of the given length, with repeating bytes so it is easily
 // compressible.
 fn compressible_body(len: usize) -> Vec<u8> {
@@ -30,44 +26,33 @@ fn incompressible_body(len: usize) -> Vec<u8> {
     [0x66, 0x90].iter().cloned().cycle().take(len).collect()
 }
 
-fn make_exe(body: Vec<u8>, relocations: Vec<exepack::Pointer>) -> exepack::EXE {
-    let header_len = round_up(exepack::EXE_HEADER_LEN as usize + 4 * relocations.len(), 512);
-    let (e_cblp, e_cp) = exepack::encode_exe_len(header_len + body.len()).unwrap();
+fn make_exe(body: Vec<u8>, relocs: Vec<exepack::Pointer>) -> exepack::EXE {
     exepack::EXE{
-        header: exepack::EXEHeader{
-            e_magic: exepack::EXE_MAGIC,
-            e_cblp: e_cblp,
-            e_cp: e_cp,
-            e_crlc: relocations.len() as u16,
-            e_cparhdr: (header_len / 16) as u16,
-            e_minalloc: 0xffff,
-            e_maxalloc: 0xffff,
-            e_ss: 0x0000,
-            e_sp: 0x0080,
-            e_csum: 0,
-            e_ip: 0x0000,
-            e_cs: 0x0000,
-            e_lfarlc: exepack::EXE_HEADER_LEN as u16,
-            e_ovno: 0,
-        },
-        data: body,
-        relocations: relocations,
+        e_minalloc: 0xffff,
+        e_maxalloc: 0xffff,
+        e_ss: 0x0000,
+        e_sp: 0x0080,
+        e_ip: 0x0000,
+        e_cs: 0x0000,
+        e_ovno: 0,
+        body: body,
+        relocs: relocs,
     }
 }
 
-fn make_relocations(n: usize) -> Vec<exepack::Pointer> {
+fn make_relocs(n: usize) -> Vec<exepack::Pointer> {
     (0..n).map(|address| exepack::Pointer {
         segment: (address >> 4) as u16,
         offset: (address & 0xf) as u16,
     }).collect()
 }
 
-fn make_compressible_exe(body_len: usize, num_relocations: usize) -> exepack::EXE {
-    make_exe(compressible_body(body_len), make_relocations(num_relocations))
+fn make_compressible_exe(body_len: usize, num_relocs: usize) -> exepack::EXE {
+    make_exe(compressible_body(body_len), make_relocs(num_relocs))
 }
 
-fn make_incompressible_exe(body_len: usize, num_relocations: usize) -> exepack::EXE {
-    make_exe(incompressible_body(body_len), make_relocations(num_relocations))
+fn make_incompressible_exe(body_len: usize, num_relocs: usize) -> exepack::EXE {
+    make_exe(incompressible_body(body_len), make_relocs(num_relocs))
 }
 
 fn save_exe<P: AsRef<path::Path>>(path: P, exe: &exepack::EXE) -> Result<(), exepack::Error> {
@@ -114,8 +99,7 @@ fn test_pack_relocs() {
         exepack::Pointer{ segment: 0xffff, offset: 0x000f },
     ].iter() {
         let mut exe = make_compressible_exe(128, 0);
-        exe.relocations.push(pointer);
-        exe.header.e_crlc += 1;
+        exe.relocs.push(pointer);
         maybe_save_exe(format!("tests/reloc_{:04x}:{:04x}.exe", pointer.segment, pointer.offset), &exe).unwrap();
         let out = pack(&exe).unwrap();
         maybe_save_exe(format!("tests/reloc_{:04x}:{:04x}.packed.exe", pointer.segment, pointer.offset), &out).unwrap();
@@ -129,8 +113,7 @@ fn test_pack_relocs() {
         exepack::Pointer{ segment: 0xffff, offset: 0x0010 },
     ].iter() {
         let mut exe = make_compressible_exe(128, 0);
-        exe.relocations.push(pointer);
-        exe.header.e_crlc += 1;
+        exe.relocs.push(pointer);
         maybe_save_exe(format!("tests/reloc_{:04x}:{:04x}.exe", pointer.segment, pointer.offset), &exe).unwrap();
         match pack(&exe) {
             Err(exepack::Error::EXEPACK(exepack::EXEPACKFormatError::RelocationAddrTooLarge(_))) => (),
@@ -191,22 +174,22 @@ fn test_pack_lengths() {
     // relocations, but of course an input EXE can only have up to 0xffff, and
     // furthermore we are limited to the entire EXEPACK block being 0xffff bytes
     // or less.
-    let num_relocations = (0xffff - exepack_size) / 2;
-    // (exepack_size + 2*num_relocations) is now either 0xfffe or 0xffff, which
+    let num_relocs = (0xffff - exepack_size) / 2;
+    // (exepack_size + 2*num_relocs) is now either 0xfffe or 0xffff, which
     // puts the stack pointer at dest_len + 0x10000 + 16. (The stub uses a
     // 16-byte stack.) The maximum representable stack pointer is ffff:fff0, so
     // the maximum dest_len = 16*0xffff+0xfff0 - (0x10000+16) = 16*0xffff - 32.
     let len = 16*0xfffd;
-    let exe = make_compressible_exe(len, num_relocations);
+    let exe = make_compressible_exe(len, num_relocs);
     maybe_save_exe("tests/maxlen_maxrelocs_compressible.exe", &exe).unwrap();
     let out = pack(&exe).unwrap();
     maybe_save_exe("tests/maxlen_maxrelocs_compressible.packed.exe", &out).unwrap();
     // 1 byte longer is an error.
-    let exe = make_compressible_exe(len+1, num_relocations);
+    let exe = make_compressible_exe(len+1, num_relocs);
     maybe_save_exe("tests/maxlen+1_maxrelocs_compressible.exe", &exe).unwrap();
     want_error!(pack(&exe));
     // 1 more relocation is an error.
-    let exe = make_compressible_exe(len, num_relocations+1);
+    let exe = make_compressible_exe(len, num_relocs+1);
     maybe_save_exe("tests/maxlen_maxrelocs+1_compressible.exe", &exe).unwrap();
     want_error!(pack(&exe));
 
@@ -232,18 +215,18 @@ fn test_pack_lengths() {
     // rounds up to 0x10000, so our ceiling is now 16*0xeffd, and the same logic
     // applies as earlier with respect to subtracting 32 for the stack pointer
     // and subtracting 4 for compression overhead.
-    let num_relocations = (0xffff - exepack_size) / 2;
+    let num_relocs = (0xffff - exepack_size) / 2;
     let len = 16*0xeffd - 4;
-    let exe = make_incompressible_exe(len, num_relocations);
+    let exe = make_incompressible_exe(len, num_relocs);
     maybe_save_exe("tests/maxlen_maxrelocs_incompressible.exe", &exe).unwrap();
     let out = pack(&exe).unwrap();
     maybe_save_exe("tests/maxlen_maxrelocs_incompressible.packed.exe", &out).unwrap();
     // 1 byte longer is an error.
-    let exe = make_incompressible_exe(len+1, num_relocations);
+    let exe = make_incompressible_exe(len+1, num_relocs);
     maybe_save_exe("tests/maxlen+1_maxrelocs_incompressible.exe", &exe).unwrap();
     want_error!(pack(&exe));
     // 1 more relocation is an error.
-    let exe = make_incompressible_exe(len, num_relocations+1);
+    let exe = make_incompressible_exe(len, num_relocs+1);
     maybe_save_exe("tests/maxlen_maxrelocs+1_incompressible.exe", &exe).unwrap();
     want_error!(pack(&exe));
 }
@@ -254,42 +237,35 @@ fn test_pack_lengths() {
 // the checksums.
 fn check_exes_equivalent(count: usize, a: &exepack::EXE, b: &exepack::EXE) {
     // Let a be the one with the shorter body.
-    let (a, b) = if a.data.len() <= b.data.len() {
+    let (a, b) = if a.body.len() <= b.body.len() {
         (a, b)
     } else {
         (b, a)
     };
 
-    assert_eq!(a.header.e_magic, b.header.e_magic, "{}", count);
-    // skip e_cblp, handled below
-    // skip e_cp, handled below
-    assert_eq!(a.header.e_crlc, b.header.e_crlc, "{}", count);
-    // skip e_cparhdr, handled below
-    assert_eq!(a.header.e_minalloc, b.header.e_minalloc, "{}", count);
-    assert_eq!(a.header.e_maxalloc, b.header.e_maxalloc, "{}", count);
-    assert_eq!(a.header.e_ss, b.header.e_ss, "{}", count);
-    assert_eq!(a.header.e_sp, b.header.e_sp, "{}", count);
-    // ignore e_csum
-    assert_eq!(a.header.e_ip, b.header.e_ip, "{}", count);
-    assert_eq!(a.header.e_cs, b.header.e_cs, "{}", count);
-    // ignore e_lfarlc
-    assert_eq!(a.header.e_ovno, b.header.e_ovno, "{}", count);
+    assert_eq!(a.e_minalloc, b.e_minalloc, "{}", count);
+    assert_eq!(a.e_maxalloc, b.e_maxalloc, "{}", count);
+    assert_eq!(a.e_ss, b.e_ss, "{}", count);
+    assert_eq!(a.e_sp, b.e_sp, "{}", count);
+    assert_eq!(a.e_ip, b.e_ip, "{}", count);
+    assert_eq!(a.e_cs, b.e_cs, "{}", count);
+    assert_eq!(a.e_ovno, b.e_ovno, "{}", count);
 
-    let diff = (b.data.len() as isize).checked_sub(a.data.len() as isize).unwrap();
+    let diff = (b.body.len() as isize).checked_sub(a.body.len() as isize).unwrap();
     // should not add more than 15 bytes of padding
-    assert!(0 <= diff && diff < 16, "{} {} {}", a.data.len(), b.data.len(), count);
-    let (b_data, b_padding) = b.data.split_at(a.data.len());
-    // data up to padding must be identical
-    assert_eq!(a.data, b_data, "{}", count);
+    assert!(0 <= diff && diff < 16, "{} {} {}", a.body.len(), b.body.len(), count);
+    let (b_body, b_padding) = b.body.split_at(a.body.len());
+    // body up to padding must be identical
+    assert_eq!(a.body, b_body, "{}", count);
     // padding must be zeroed
     for c in b_padding {
         assert_eq!(*c, 0x00, "{:?} {}", b_padding, count);
     }
 
     // relocations must be identical
-    let mut a_relocs = a.relocations.clone();
+    let mut a_relocs = a.relocs.clone();
     a_relocs.sort();
-    let mut b_relocs = a.relocations.clone();
+    let mut b_relocs = a.relocs.clone();
     b_relocs.sort();
     assert_eq!(a_relocs, b_relocs, "{}", count);
 }

@@ -42,6 +42,9 @@ use std::fmt;
 use std::io::{self, Read, Write};
 use std::sync::atomic;
 
+mod pointer;
+pub use pointer::Pointer;
+
 /// Our pre-assembled decompression stub.
 pub const STUB: &'static [u8; 283] = include!("stub.in");
 
@@ -104,89 +107,39 @@ fn annotate_io_error(err: io::Error, msg: &str) -> io::Error {
     io::Error::new(err.kind(), format!("{}: {}", msg, err))
 }
 
-pub const EXE_MAGIC: u16 = 0x5a4d; // "MZ"
-// The length of an EXE header excluding the variable-sized padding.
-pub const EXE_HEADER_LEN: u64 = 28;
-
 #[derive(Debug)]
-pub struct EXE {
-    pub header: EXEHeader,
-    pub data: Vec<u8>,
-    pub relocations: Vec<Pointer>,
+pub enum Error {
+    Io(io::Error),
+    EXE(EXEFormatError),
+    EXEPACK(EXEPACKFormatError),
 }
 
-// http://www.delorie.com/djgpp/doc/exe/
-// This is a form of IMAGE_DOS_HEADER from <winnt.h>.
-#[derive(Debug)]
-pub struct EXEHeader {
-    pub e_magic: u16,
-    pub e_cblp: u16,
-    pub e_cp: u16,
-    pub e_crlc: u16,
-    pub e_cparhdr: u16,
-    pub e_minalloc: u16,
-    pub e_maxalloc: u16,
-    pub e_ss: u16,
-    pub e_sp: u16,
-    pub e_csum: u16,
-    pub e_ip: u16,
-    pub e_cs: u16,
-    pub e_lfarlc: u16,
-    pub e_ovno: u16,
-}
-
-impl EXEHeader {
-    fn exe_len(&self) -> u64 {
-        if self.e_cp == 0 || self.e_cblp >= 512 {
-            panic!("nonsense exe len e_cp={} e_cblp={}", self.e_cp, self.e_cblp);
-        }
-        (self.e_cp - 1) as u64 * 512
-            + if self.e_cblp == 0 { 512 } else { self.e_cblp } as u64
-    }
-
-    fn header_len(&self) -> u64 {
-        self.e_cparhdr as u64 * 16
+impl From<io::Error> for Error {
+    fn from(err: io::Error) -> Self {
+        Error::Io(err)
     }
 }
 
-#[derive(Debug, Copy, Clone)]
-/// A segment:offset far pointer.
-pub struct Pointer {
-    pub segment: u16,
-    pub offset: u16,
-}
-
-impl Pointer {
-    fn abs(&self) -> u32 {
-        self.segment as u32 * 16 + self.offset as u32
+impl From<EXEFormatError> for Error {
+    fn from(err: EXEFormatError) -> Self {
+        Error::EXE(err)
     }
 }
 
-impl fmt::Display for Pointer {
+impl From<EXEPACKFormatError> for Error {
+    fn from(err: EXEPACKFormatError) -> Self {
+        Error::EXEPACK(err)
+    }
+}
+
+impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:04x}:{:04x}", self.segment, self.offset)
+        match self {
+            &Error::Io(ref err) => err.fmt(f),
+            &Error::EXE(ref err) => err.fmt(f),
+            &Error::EXEPACK(ref err) => err.fmt(f),
+        }
     }
-}
-
-impl cmp::Ord for Pointer {
-    fn cmp(&self, other: &Self) -> cmp::Ordering {
-        self.abs().cmp(&other.abs())
-    }
-}
-
-impl cmp::PartialOrd for Pointer {
-    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl cmp::PartialEq for Pointer {
-    fn eq(&self, other: &Self) -> bool {
-        self.abs() == other.abs()
-    }
-}
-
-impl cmp::Eq for Pointer {
 }
 
 #[derive(Debug)]
@@ -216,8 +169,96 @@ impl fmt::Display for EXEFormatError {
     }
 }
 
+pub const EXE_MAGIC: u16 = 0x5a4d; // "MZ"
+// The length of an EXE header excluding the variable-sized padding.
+pub const EXE_HEADER_LEN: u64 = 28;
+
+#[derive(Debug)]
+pub struct EXE {
+    // Some fields taken verbatim from the EXE header, the ones that aren't
+    // related to the "container" aspects of EXE. Other fields like e_cblp,
+    // e_cp, and e_cparhdr, which depend on the size of the body and the number
+    // of relocations, are re-computed as needed.
+    pub e_minalloc: u16,
+    pub e_maxalloc: u16,
+    pub e_ss: u16,
+    pub e_sp: u16,
+    pub e_ip: u16,
+    pub e_cs: u16,
+    pub e_ovno: u16,
+
+    // Everything following the header.
+    pub body: Vec<u8>,
+
+    // Relocations from the header.
+    pub relocs: Vec<Pointer>,
+}
+
+impl EXE {
+    /// Return a new `EXEHeader` appropriate for this `EXE`.
+    fn make_header(&self) -> Result<EXEHeader, Error> {
+        // http://www.delorie.com/djgpp/doc/exe/: "Note that some OSs and/or
+        // programs may fail if the header is not a multiple of 512 bytes."
+        let num_header_pages = ((EXE_HEADER_LEN as usize + 4 * self.relocs.len()) + 511) / 512;
+        let (e_cblp, e_cp) = encode_exe_len(num_header_pages * 512 + self.body.len())
+            .ok_or(Error::EXE(EXEFormatError::TooLong(num_header_pages * 512 + self.body.len())))?;
+        let e_crlc = checked_u16(self.relocs.len())
+            .ok_or(Error::EXEPACK(EXEPACKFormatError::TooManyEXERelocations(self.relocs.len())))?;
+        Ok(EXEHeader {
+            e_magic: EXE_MAGIC,
+            e_cblp: e_cblp,
+            e_cp: e_cp,
+            e_crlc: e_crlc,
+            e_cparhdr: (num_header_pages * 512 / 16) as u16,
+            e_minalloc: self.e_minalloc,
+            e_maxalloc: self.e_maxalloc,
+            e_ss: self.e_ss,
+            e_sp: self.e_sp,
+            e_csum: 0,
+            e_ip: self.e_ip,
+            e_cs: self.e_cs,
+            e_lfarlc: EXE_HEADER_LEN as u16,
+            e_ovno: self.e_ovno,
+        })
+    }
+}
+
+/// A DOS EXE header. See <http://www.delorie.com/djgpp/doc/exe/>.
+/// The field names are taken from `IMAGE_DOS_HEADER` from \<winnt.h\>.
+#[derive(Debug)]
+struct EXEHeader {
+    pub e_magic: u16,
+    pub e_cblp: u16,
+    pub e_cp: u16,
+    pub e_crlc: u16,
+    pub e_cparhdr: u16,
+    pub e_minalloc: u16,
+    pub e_maxalloc: u16,
+    pub e_ss: u16,
+    pub e_sp: u16,
+    pub e_csum: u16,
+    pub e_ip: u16,
+    pub e_cs: u16,
+    pub e_lfarlc: u16,
+    pub e_ovno: u16,
+}
+
+impl EXEHeader {
+    pub fn exe_len(&self) -> u64 {
+        if self.e_cp == 0 || self.e_cblp >= 512 {
+            panic!("nonsense exe len e_cp={} e_cblp={}", self.e_cp, self.e_cblp);
+        }
+        (self.e_cp - 1) as u64 * 512
+            + if self.e_cblp == 0 { 512 } else { self.e_cblp } as u64
+    }
+
+    pub fn header_len(&self) -> u64 {
+        self.e_cparhdr as u64 * 16
+    }
+}
+
 fn read_exe_header<R: Read>(r: &mut R) -> io::Result<EXEHeader> {
-    Ok(EXEHeader{
+    Ok(EXEHeader {
         e_magic: read_u16le(r)?,
         e_cblp: read_u16le(r)?,
         e_cp: read_u16le(r)?,
@@ -235,76 +276,97 @@ fn read_exe_header<R: Read>(r: &mut R) -> io::Result<EXEHeader> {
     })
 }
 
-fn read_exe_relocations<R: Read>(r: &mut R, relocations: &mut Vec<Pointer>, n: usize) -> io::Result<()> {
-    for _ in 0..n {
-        relocations.push(Pointer {
+fn read_exe_relocs<R: Read>(r: &mut R, num_relocs: usize) -> io::Result<Vec<Pointer>> {
+    let mut relocs = Vec::with_capacity(num_relocs);
+    for _ in 0..num_relocs {
+        relocs.push(Pointer {
             offset: read_u16le(r)?,
             segment: read_u16le(r)?,
         });
     }
-    Ok(())
+    Ok(relocs)
 }
 
 /// Read an EXE header (including relocations and padding) and do consistency
 /// checks on it. Reads exactly `header.header_len()` bytes from `r`. Doesn't
 /// support relocation entries stored outside the header.
 fn read_and_check_exe_header<R: Read>(r: &mut R) -> Result<(EXEHeader, Vec<Pointer>), Error> {
-    let exe_header = read_exe_header(r)
+    let header = read_exe_header(r)
         .map_err(|err| annotate_io_error(err, "reading EXE header"))?;
-    debug!("{:?}", exe_header);
+    debug!("{:?}", header);
 
     // Begin consistency tests on the fields of the EXE header.
-    if exe_header.e_magic != EXE_MAGIC {
-        return Err(Error::EXE(EXEFormatError::BadMagic(exe_header.e_magic)));
+    if header.e_magic != EXE_MAGIC {
+        return Err(Error::EXE(EXEFormatError::BadMagic(header.e_magic)));
     }
 
     // Consistency of e_cparhdr. We need the stated header length to be at least
     // as large as the header we just read.
-    if exe_header.header_len() < EXE_HEADER_LEN {
-        return Err(Error::EXE(EXEFormatError::HeaderTooShort(exe_header.e_cparhdr)));
+    if header.header_len() < EXE_HEADER_LEN {
+        return Err(Error::EXE(EXEFormatError::HeaderTooShort(header.e_cparhdr)));
     }
 
     // Consistency of e_cp and e_cblp.
-    if exe_header.e_cp == 0 || exe_header.e_cblp >= 512 {
-        return Err(Error::EXE(EXEFormatError::BadNumPages(exe_header.e_cp, exe_header.e_cblp)));
+    if header.e_cp == 0 || header.e_cblp >= 512 {
+        return Err(Error::EXE(EXEFormatError::BadNumPages(header.e_cp, header.e_cblp)));
     }
-    if exe_header.exe_len() < exe_header.header_len() {
-        return Err(Error::EXE(EXEFormatError::BadNumPages(exe_header.e_cp, exe_header.e_cblp)));
+    if header.exe_len() < header.header_len() {
+        return Err(Error::EXE(EXEFormatError::BadNumPages(header.e_cp, header.e_cblp)));
     }
 
     // Consistency of e_lfarlc and e_crlc.
-    let relocations_start = exe_header.e_lfarlc as u64;
-    let relocations_end = relocations_start + exe_header.e_crlc as u64 * 4;
+    let relocations_start = header.e_lfarlc as u64;
+    let relocations_end = relocations_start + header.e_crlc as u64 * 4;
 
-    let mut relocations = Vec::new();
-    if exe_header.e_crlc > 0 {
+    let relocs = if header.e_crlc > 0 {
         // Discard up to the beginning of relocations.
         discard(r, relocations_start.checked_sub(EXE_HEADER_LEN)
-            .ok_or(Error::EXE(EXEFormatError::RelocationsOutsideHeader(exe_header.e_crlc, exe_header.e_lfarlc)))?
+            .ok_or(Error::EXE(EXEFormatError::RelocationsOutsideHeader(header.e_crlc, header.e_lfarlc)))?
         ).map_err(|err| annotate_io_error(err, "reading to beginning of relocation table"))?;
         // Read relocations.
-        read_exe_relocations(r, &mut relocations, exe_header.e_crlc as usize)
+        let mut relocs = read_exe_relocs(r, header.e_crlc as usize)
             .map_err(|err| annotate_io_error(err, "reading EXE relocation table"))?;
         // Discard any remaining header padding.
-        discard(r, exe_header.header_len().checked_sub(relocations_end)
-            .ok_or(Error::EXE(EXEFormatError::RelocationsOutsideHeader(exe_header.e_crlc, exe_header.e_lfarlc)))?
+        discard(r, header.header_len().checked_sub(relocations_end)
+            .ok_or(Error::EXE(EXEFormatError::RelocationsOutsideHeader(header.e_crlc, header.e_lfarlc)))?
         ).map_err(|err| annotate_io_error(err, "reading to end of header"))?;
+        relocs
     } else {
-        discard(r, exe_header.header_len().checked_sub(EXE_HEADER_LEN).unwrap())
+        discard(r, header.header_len().checked_sub(EXE_HEADER_LEN).unwrap())
             .map_err(|err| annotate_io_error(err, "reading to end of header"))?;
-    }
+        Vec::new()
+    };
 
-    Ok((exe_header, relocations))
+    Ok((header, relocs))
 }
 
-// The EXE header contains a limit to the overall length of the EXE file in the
-// e_cblp and e_cp fields. This function trims an io::Read to limit it to the
-// length specified in the header, assuming that the header (including
-// relocations and padding) has already been read. file_len_hint is an optional
-// externally provided hint of the input file's total length, which we use to
-// emit a warning when it exceeds the length stated in the EXE header. Panics if
-// the EXE length is less than the header length (which cannot happen if the
-// header was returned from read_and_check_exe_header).
+fn write_exe_header<W: Write>(w: &mut W, header: &EXEHeader) -> io::Result<usize> {
+    let mut n = 0;
+    n += write_u16le(w, header.e_magic)?;
+    n += write_u16le(w, header.e_cblp)?;
+    n += write_u16le(w, header.e_cp)?;
+    n += write_u16le(w, header.e_crlc)?;
+    n += write_u16le(w, header.e_cparhdr)?;
+    n += write_u16le(w, header.e_minalloc)?;
+    n += write_u16le(w, header.e_maxalloc)?;
+    n += write_u16le(w, header.e_ss)?;
+    n += write_u16le(w, header.e_sp)?;
+    n += write_u16le(w, header.e_csum)?;
+    n += write_u16le(w, header.e_ip)?;
+    n += write_u16le(w, header.e_cs)?;
+    n += write_u16le(w, header.e_lfarlc)?;
+    n += write_u16le(w, header.e_ovno)?;
+    Ok(n)
+}
+
+/// The EXE header contains a limit to the overall length of the EXE file in the
+/// `e_cblp` and `e_cp` fields. This function trims an `io::Read` to limit it to
+/// the length specified in the header, assuming that the header (including
+/// relocations and padding) has already been read. `file_len_hint` is an
+/// optional externally provided hint of the input file's total length, which we
+/// use to emit a warning when it exceeds the length stated in the EXE header.
+/// Panics if the EXE length is less than the header length (which cannot happen
+/// if the header was returned from `read_and_check_exe_header`).
 fn trim_input_from_header<R: Read>(
     input: R,
     header: &EXEHeader,
@@ -313,8 +375,7 @@ fn trim_input_from_header<R: Read>(
     if let Some(file_len) = file_len_hint {
         // The EXE file length is allowed to be smaller than the length of the
         // file containing it. Emit a warning that we are ignoring trailing
-        // garbage. The opposite situation, exe_len > file_len, is an error that
-        // we will notice later when we get an unexpected EOF.
+        // garbage.
         if header.exe_len() < file_len {
             eprintln!("warning: EXE file size is {}; ignoring {} trailing bytes", file_len, file_len - header.exe_len());
         }
@@ -327,23 +388,29 @@ fn trim_input_from_header<R: Read>(
 /// the input file's total length, which we use to emit a warning when it
 /// exceeds the length stated in the EXE header.
 pub fn read_exe<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE, Error> {
-    let (header, relocations) = read_and_check_exe_header(input)?;
-    debug!("{:?}", relocations);
+    let (header, relocs) = read_and_check_exe_header(input)?;
+    debug!("{:?}", relocs);
 
     // Now we are positioned just after the EXE header. Trim any data that lies
     // beyond the length of the EXE file stated in the header.
-    let mut input = trim_input_from_header(input, &header, file_len_hint);
+    let input = &mut trim_input_from_header(input, &header, file_len_hint);
 
-    let mut data: Vec<u8> = Vec::new();
-    // The input.take above ensures that we will read no more than 0xffff*512
-    // bytes < 32 MB here.
-    input.read_to_end(&mut data)
+    let mut body: Vec<u8> = Vec::new();
+    // The trim_input_from_header above ensures that we will read no more than
+    // 0xffff*512 bytes < 32 MB here.
+    input.read_to_end(&mut body)
         .map_err(|err| annotate_io_error(err, "reading EXE body"))?;
 
     Ok(EXE {
-        header: header,
-        data: data,
-        relocations: relocations,
+        e_minalloc: header.e_minalloc,
+        e_maxalloc: header.e_maxalloc,
+        e_ss: header.e_ss,
+        e_sp: header.e_sp,
+        e_ip: header.e_ip,
+        e_cs: header.e_cs,
+        e_ovno: header.e_ovno,
+        body,
+        relocs,
     })
 }
 
@@ -429,41 +496,6 @@ impl fmt::Display for EXEPACKFormatError {
                 write!(f, "relocation address {} is too large to represent in the EXEPACK table", pointer),
             &EXEPACKFormatError::EXEPACKTooLong(len) =>
                 write!(f, "EXEPACK area is too long at {} bytes", len),
-        }
-    }
-}
-
-#[derive(Debug)]
-pub enum Error {
-    Io(io::Error),
-    EXE(EXEFormatError),
-    EXEPACK(EXEPACKFormatError),
-}
-
-impl From<io::Error> for Error {
-    fn from(err: io::Error) -> Self {
-        Error::Io(err)
-    }
-}
-
-impl From<EXEFormatError> for Error {
-    fn from(err: EXEFormatError) -> Self {
-        Error::EXE(err)
-    }
-}
-
-impl From<EXEPACKFormatError> for Error {
-    fn from(err: EXEPACKFormatError) -> Self {
-        Error::EXEPACK(err)
-    }
-}
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            &Error::Io(ref err) => err.fmt(f),
-            &Error::EXE(ref err) => err.fmt(f),
-            &Error::EXEPACK(ref err) => err.fmt(f),
         }
     }
 }
@@ -580,9 +612,9 @@ pub fn compress(output: &mut Vec<u8>, input: &[u8]) {
     C.push(Entry{cost: 3, len: 0}); // 00 00 b1
     F.push(Entry{cost: 4, len: 0}); // XX 00 00 b3
     // if we've done the whole input in the R state, we'll need to append a
-    // 00 00 b1 (just as in C), solely for the sake of giving the decompression
-    // routine a termination indicator.
-    R.push(3);
+    // 00 00 b1 (just as in the C case), solely for the sake of giving the
+    // decompression routine a termination indicator.
+    R.push(3);                      // 00 00 b1
 
     for j in (0..input.len()).rev() {
         // j indexes input backwards from input.len()-1 to 0; i indexes the
@@ -640,6 +672,7 @@ pub fn compress(output: &mut Vec<u8>, input: &[u8]) {
 
     // Stage 2: trace back through the C, F, and R tables to recover the
     // sequence of commands that lead to the minimum costs we computed.
+
     enum Cmd {
         C,
         F,
@@ -713,27 +746,27 @@ pub fn compress(output: &mut Vec<u8>, input: &[u8]) {
 }
 
 /// Encode a compressed relocation table.
-fn encode_relocations(buf: &mut Vec<u8>, relocations: &[Pointer]) -> Result<(), Error> {
+fn encode_relocs(buf: &mut Vec<u8>, relocs: &[Pointer]) -> Result<(), Error> {
     // http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK#Relocation_Table
-    let mut relocations: Vec<&Pointer> = relocations.iter().collect();
-    relocations.sort();
+    let mut relocs: Vec<Pointer> = relocs.iter().cloned().collect();
+    relocs.sort();
     let mut i = 0;
     for segment_index in 0..16 {
         let mut j = i;
-        while j < relocations.len() && relocations[j].abs() >> 16 == segment_index {
+        while j < relocs.len() && relocs[j].abs() >> 16 == segment_index {
             j += 1;
         }
         // The checked_u16 cannot fail; for that to happen, the input EXE must
         // have contained at least 0x10000 relocations, which is impossible to
         // represent in the e_crlc field.
         push_u16le(buf, checked_u16(j - i).unwrap());
-        for pointer in relocations[i..j].iter() {
+        for pointer in relocs[i..j].iter() {
             push_u16le(buf, (pointer.abs() & 0xffff) as u16);
         }
         i = j;
     }
-    if i < relocations.len() {
-        return Err(Error::EXEPACK(EXEPACKFormatError::RelocationAddrTooLarge(*relocations[i])));
+    if i < relocs.len() {
+        return Err(Error::EXEPACK(EXEPACKFormatError::RelocationAddrTooLarge(relocs[i])));
     }
     Ok(())
 }
@@ -745,7 +778,7 @@ fn encode_relocations(buf: &mut Vec<u8>, relocations: &[Pointer]) -> Result<(), 
 pub fn pack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE, Error> {
     let exe = read_exe(input, file_len_hint)?;
 
-    let mut uncompressed = exe.data;
+    let mut uncompressed = exe.body;
     // Pad uncompressed to a multiple of 16 bytes.
     {
         let len = round_up(uncompressed.len(), 16).unwrap();
@@ -762,47 +795,42 @@ pub fn pack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE, E
     }
     assert_eq!(compressed.len() % 16, 0);
 
-    let mut relocations_buffer = Vec::new();
-    encode_relocations(&mut relocations_buffer, &exe.relocations)?;
+    let mut relocs_buf = Vec::new();
+    encode_relocs(&mut relocs_buf, &exe.relocs)?;
 
 
     // Now we have the pieces we need. Start putting together the output EXE.
-    // The `data` vec will hold the EXE body (everything after the header).
-    let mut data = Vec::new();
+    // The `body` vec will hold the EXE body (everything after the header).
+    let mut body = Vec::new();
 
     // Start with the padded, compressed data.
-    data.extend(compressed.iter());
+    body.extend(compressed.iter());
 
     // Next, the 18-byte EXEPACK header.
     let exepack_size = (18 as usize)
         .checked_add(STUB.len()).unwrap()
-        .checked_add(relocations_buffer.len()).unwrap();
-    for exe_var in [
-        exe.header.e_ip,    // real_ip
-        exe.header.e_cs,    // real_ip
-        0,                  // mem_start (unused)
-        checked_u16(exepack_size)   // exepack_size
+        .checked_add(relocs_buf.len()).unwrap();
+    encode_exepack_header(&mut body, &EXEPACKHeader {
+        real_ip: exe.e_ip,
+        real_cs: exe.e_cs,
+        exepack_size: checked_u16(exepack_size)
             .ok_or(Error::EXEPACK(EXEPACKFormatError::EXEPACKTooLong(exepack_size)))?,
-        exe.header.e_sp,    // real_sp
-        exe.header.e_ss,    // real_ss
-        checked_u16(uncompressed.len() / 16)    // dest_len
+        real_sp: exe.e_sp,
+        real_ss: exe.e_ss,
+        dest_len: checked_u16(uncompressed.len() / 16)
             .ok_or(Error::EXEPACK(EXEPACKFormatError::UncompressedTooLong(uncompressed.len())))?,
-        1,                  // skip_len
-        EXEPACK_MAGIC,      // signature
-    ].iter() {
-        push_u16le(&mut data, *exe_var);
-    }
+        skip_len: 1,
+        signature: EXEPACK_MAGIC,
+    });
 
     // Then the stub itself.
-    data.extend(STUB.iter());
+    body.extend(STUB.iter());
 
     // Finally, the packed relocation table.
-    data.extend(relocations_buffer.iter());
+    body.extend(relocs_buf.iter());
 
 
-    // Now that we know how big the output will be, we can build the EXE header.
-    let (e_cblp, e_cp) = encode_exe_len(512 + data.len())
-        .ok_or(Error::EXE(EXEFormatError::TooLong(data.len())))?;
+    // Now that we know how big the output will be, we can build the output EXE.
     // The code segment points at the EXEPACK header, immediately after the
     // compressed data.
     let e_cs = checked_u16(compressed.len() / 16)
@@ -823,7 +851,7 @@ pub fn pack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE, E
     // suitable for /EXEPACK; relink without".
     // https://archive.org/details/bitsavers_ibmpcdos15lReferenceJul88_10507385/page/n128?q=EXEPACK
     let (e_ss, e_sp) = {
-        let len = cmp::max(uncompressed.len(), data.len()) + exepack_size;
+        let len = cmp::max(uncompressed.len(), body.len()) + exepack_size;
         // Reserve 16 bytes for the stack. The stub doesn't need much.
         let stack_pointer = round_up(len, 16).unwrap() + 16;
         // Now, shift as many bits as possible from the segment to the offset,
@@ -840,24 +868,17 @@ pub fn pack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE, E
             )
         }
     };
-    let new_exe_header = EXEHeader{
-        e_magic: EXE_MAGIC,
-        e_cblp: e_cblp,
-        e_cp: e_cp,
-        e_crlc: 0,
-        e_cparhdr: (512 / 16) as u16,   // No relocations means a fixed-size EXE header.
-        e_minalloc: exe.header.e_minalloc,
-        e_maxalloc: exe.header.e_maxalloc,
+    Ok(EXE {
+        e_minalloc: exe.e_minalloc,
+        e_maxalloc: exe.e_maxalloc,
         e_ss: e_ss,
         e_sp: e_sp,
-        e_csum: 0,
-        e_ip: 18, // Stub begins just after the EXEPACK header.
+        e_ip: 18,   // Stub begins just after the EXEPACK header.
         e_cs: e_cs,
-        e_lfarlc: EXE_HEADER_LEN as u16,
-        e_ovno: 0,
-    };
-    debug!("{:?}", new_exe_header);
-    Ok(EXE{header: new_exe_header, data: data, relocations: Vec::new()})
+        e_ovno: exe.e_ovno,
+        body,
+        relocs: Vec::new(), // No relocations at the EXEPACK layer.
+    })
 }
 
 /// Return a new index after reading up to 15 bytes of 0xff padding from the end
@@ -948,25 +969,25 @@ struct EXEPACKHeader {
 }
 
 fn parse_exepack_header(buf: &[u8]) -> Result<EXEPACKHeader, EXEPACKFormatError> {
-    let mut r = io::Cursor::new(buf);
     let uses_skip_len = match buf.len() {
         16 => false,
         18 => true,
-        _ => return Err(EXEPACKFormatError::UnknownHeaderLength(buf.len())),
+        _ => return Err(From::from(EXEPACKFormatError::UnknownHeaderLength(buf.len()))),
     };
-    let real_ip = read_u16le(&mut r).unwrap();
-    let real_cs = read_u16le(&mut r).unwrap();
-    let _ = read_u16le(&mut r).unwrap(); // Ignore "mem_start".
-    let exepack_size = read_u16le(&mut r).unwrap();
-    let real_sp = read_u16le(&mut r).unwrap();
-    let real_ss = read_u16le(&mut r).unwrap();
-    let dest_len = read_u16le(&mut r).unwrap();
+    let r = &mut io::Cursor::new(buf);
+    let real_ip = read_u16le(r).unwrap();
+    let real_cs = read_u16le(r).unwrap();
+    let _ = read_u16le(r).unwrap(); // Ignore "mem_start".
+    let exepack_size = read_u16le(r).unwrap();
+    let real_sp = read_u16le(r).unwrap();
+    let real_ss = read_u16le(r).unwrap();
+    let dest_len = read_u16le(r).unwrap();
     let skip_len = if uses_skip_len {
-        read_u16le(&mut r).unwrap()
+        read_u16le(r).unwrap()
     } else {
         1
     };
-    let signature = read_u16le(&mut r).unwrap();
+    let signature = read_u16le(r).unwrap();
     Ok(EXEPACKHeader {
         real_ip,
         real_cs,
@@ -977,6 +998,18 @@ fn parse_exepack_header(buf: &[u8]) -> Result<EXEPACKHeader, EXEPACKFormatError>
         skip_len,
         signature,
     })
+}
+
+fn encode_exepack_header(buf: &mut Vec<u8>, header: &EXEPACKHeader) {
+    push_u16le(buf, header.real_ip);
+    push_u16le(buf, header.real_cs);
+    push_u16le(buf, 0); // mem_start
+    push_u16le(buf, header.exepack_size);
+    push_u16le(buf, header.real_sp);
+    push_u16le(buf, header.real_ss);
+    push_u16le(buf, header.dest_len);
+    push_u16le(buf, header.skip_len);
+    push_u16le(buf, header.signature);
 }
 
 /// Read a decompression stub (the executable code following the EXEPACK header
@@ -1014,44 +1047,19 @@ fn read_stub<R: Read>(r: &mut R) -> io::Result<(Vec<u8>, bool)> {
 }
 
 // http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK#Relocation_Table
-fn read_relocations<R: Read>(r: &mut R) -> io::Result<Vec<Pointer>> {
-    let mut relocations = Vec::new();
+fn read_exepack_relocs<R: Read>(r: &mut R) -> io::Result<Vec<Pointer>> {
+    let mut relocs = Vec::new();
     for i in 0..16 {
-        let num_relocations = read_u16le(r)?;
-        for _ in 0..num_relocations {
+        let num_relocs = read_u16le(r)?;
+        for _ in 0..num_relocs {
             let offset = read_u16le(r)?;
-            relocations.push(Pointer {
+            relocs.push(Pointer {
                 segment: i * 0x1000,
                 offset: offset,
             });
         }
     }
-    Ok(relocations)
-}
-
-/// Return a new `EXEHeader` that is the same as `exe.header`, only with the
-/// fields `e_cblp`, `e_cp`, `e_crlc`, `e_cparhdr`, and `e_lfarlc` adjusted
-/// according to the length of `exe.data` and the number of relocations in
-/// `exe.relocations`. Sets `e_csum` to zero.
-fn adjust_exe_header(header: &EXEHeader, data_len: usize, num_relocations: usize)
-    -> Result<EXEHeader, Error>
-{
-    // http://www.delorie.com/djgpp/doc/exe/: "Note that some OSs and/or
-    // programs may fail if the header is not a multiple of 512 bytes."
-    let num_header_pages = ((EXE_HEADER_LEN as usize + 4 * num_relocations) + 511) / 512;
-    let (e_cblp, e_cp) = encode_exe_len(num_header_pages * 512 + data_len)
-        .ok_or(Error::EXE(EXEFormatError::TooLong(num_header_pages * 512 + data_len)))?;
-    let e_crlc = checked_u16(num_relocations)
-        .ok_or(Error::EXEPACK(EXEPACKFormatError::TooManyEXERelocations(num_relocations)))?;
-    Ok(EXEHeader {
-        e_cblp: e_cblp,
-        e_cp: e_cp,
-        e_crlc: e_crlc,
-        e_cparhdr: (num_header_pages * 512 / 16) as u16,
-        e_csum: 0,
-        e_lfarlc: EXE_HEADER_LEN as u16,
-        ..*header
-    })
+    Ok(relocs)
 }
 
 /// Unpack an input executable and return the elements of an unpacked executable.
@@ -1059,38 +1067,38 @@ fn adjust_exe_header(header: &EXEHeader, data_len: usize, num_relocations: usize
 /// length, which we use to emit a warning when it exceeds the length stated in
 /// the EXE header.
 pub fn unpack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE, Error> {
-    let (exe_header, relocations) = read_and_check_exe_header(input)?;
-    debug!("{:?}", relocations);
-    if relocations.len() > 0 {
+    let (exe_header, relocs) = read_and_check_exe_header(input)?;
+    debug!("{:?}", relocs);
+    if relocs.len() > 0 {
         return Err(Error::EXE(EXEFormatError::RelocationsNotSupported(exe_header.e_crlc, exe_header.e_lfarlc)));
     }
 
     // Now we are positioned just after the EXE header. Trim any data that lies
     // beyond the length of the EXE file stated in the header.
-    let mut input = trim_input_from_header(input, &exe_header, file_len_hint);
+    let input = &mut trim_input_from_header(input, &exe_header, file_len_hint);
 
     // Compressed data starts immediately after the EXE header and ends at
-    // cs:0000. We will decompress into the very same buffer (after expanding
-    // it).
+    // cs:0000. We will decompress into the very same buffer (after enlarging it
+    // as necessary).
     let mut work_buffer = vec![0; exe_header.e_cs as usize * 16];
     input.read_exact(&mut work_buffer)
         .map_err(|err| annotate_io_error(err, "reading compressed data"))?;
 
     // The EXEPACK header starts at cs:0000 and ends at cs:ip.
-    let mut exepack_header_buffer = vec![0; exe_header.e_ip as usize];
-    input.read_exact(&mut exepack_header_buffer)
+    let mut exepack_header_buf = vec![0; exe_header.e_ip as usize];
+    input.read_exact(&mut exepack_header_buf)
         .map_err(|err| annotate_io_error(err, "reading EXEPACK header"))?;
-    let exepack_header = parse_exepack_header(&exepack_header_buffer)?;
+    let exepack_header = parse_exepack_header(&exepack_header_buf)?;
     if exepack_header.signature != EXEPACK_MAGIC {
         return Err(Error::EXEPACK(EXEPACKFormatError::BadMagic(exepack_header.signature)));
     }
     debug!("{:?}", exepack_header);
 
     // The decompression stub starts at cs:ip.
-    let (stub, found) = read_stub(&mut input)
+    let (stub, found) = read_stub(input)
         .map_err(|err| annotate_io_error(err, "reading EXEPACK decompression stub"))?;
     if !found {
-        return Err(Error::EXEPACK(EXEPACKFormatError::UnknownStub(exepack_header_buffer, stub)));
+        return Err(Error::EXEPACK(EXEPACKFormatError::UnknownStub(exepack_header_buf, stub)));
     }
     debug!("found stub of length {}", stub.len());
 
@@ -1100,9 +1108,10 @@ pub fn unpack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE,
     // itself to copy out of the way before starting the main compression loop.
     // Therefore we are justified in raising an error if any reads go past
     // exepack_size.
-    let mut input = {
-        let read_so_far = exepack_header_buffer.len() + stub.len();
+    let input = &mut {
+        let read_so_far = exepack_header_buf.len() + stub.len();
         if (exepack_header.exepack_size as usize) < read_so_far {
+            // exepack_size is smaller than what we've already read.
             return Err(Error::EXEPACK(EXEPACKFormatError::EXEPACKTooShort(exepack_header.exepack_size, read_so_far)));
         }
         input.take((exepack_header.exepack_size as usize - read_so_far) as u64)
@@ -1113,17 +1122,21 @@ pub fn unpack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE,
     // 0 because that would mean −1 paragraphs of padding.
     let skip_len = 16 * (exepack_header.skip_len as usize).checked_sub(1)
         .ok_or(Error::EXEPACK(EXEPACKFormatError::SkipTooShort(exepack_header.skip_len)))?;
+    // It's weird that skip_len applies to both the compressed and uncompressed
+    // lengths, but it does. Which seems to make skip_len pointless. If skip_len
+    // applied only to the uncompressed length, it could be useful for
+    // decoupling the end of decompression buffer and the location to which the
+    // EXEPACK copies itself, in the case where the end of the decompression
+    // buffer lies within the EXEPACK block, which would cause the EXEPACK block
+    // to clobber itself while it is still running. But it doesn't. (Our custom
+    // STUB has extra logic to handle that case, but the Microsoft stubs do
+    // not.)
     let compressed_len = work_buffer.len().checked_sub(skip_len)
         .ok_or(Error::EXEPACK(EXEPACKFormatError::SkipTooLong(exepack_header.skip_len)))?;
-    // It's weird that skip_len applies to the *un*compressed length as well,
-    // but it does (see the disassembly in stubs.rs). Why didn't they just make
-    // data_len that much smaller?
     let uncompressed_len = (exepack_header.dest_len as usize * 16).checked_sub(skip_len)
         .ok_or(Error::EXEPACK(EXEPACKFormatError::SkipTooLong(exepack_header.skip_len)))?;
-    // Expand the buffer to hold the uncompressed data.
-    if uncompressed_len > compressed_len {
-        work_buffer.resize(uncompressed_len, 0);
-    }
+    // Expand the buffer, if needed, to hold the uncompressed data.
+    work_buffer.resize(cmp::max(compressed_len, uncompressed_len), 0);
     // Remove 0xff padding.
     let compressed_len = unpad(&work_buffer, compressed_len);
     // Now let's actually decompress the buffer.
@@ -1133,74 +1146,46 @@ pub fn unpack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE,
 
     // The last step is to parse the relocation table that follows the
     // decompression stub.
-    let relocations = read_relocations(&mut input)
+    let relocs = read_exepack_relocs(input)
         .map_err(|err| annotate_io_error(err, "reading EXEPACK relocation table"))?;
-    debug!("{:?}", relocations);
+    debug!("{:?}", relocs);
 
     // It's not an error if there is trailing data here (i.e., if
-    // exepack_header.exepack_size is larger than it needs to be). Any trailing data
-    // would be ignored by the EXEPACK decompression stub.
+    // exepack_header.exepack_size is larger than it needs to be). Any trailing
+    // data would be ignored by the EXEPACK decompression stub if you were to
+    // run it.
 
     // Finally, construct a new EXE.
-    let new_exe_header = adjust_exe_header(
-        &EXEHeader{
-            e_magic: EXE_MAGIC,
-            e_cblp: 0,      // will be fixed by adjust_exe_header
-            e_cp: 0,        // will be fixed by adjust_exe_header
-            e_crlc: 0,      // will be fixed by adjust_exe_header
-            e_cparhdr: 0,   // will be fixed by adjust_exe_header
-            e_minalloc: exe_header.e_minalloc,
-            e_maxalloc: exe_header.e_maxalloc,
-            e_ss: exepack_header.real_ss,
-            e_sp: exepack_header.real_sp,
-            e_csum: 0,
-            e_ip: exepack_header.real_ip,
-            e_cs: exepack_header.real_cs,
-            e_lfarlc: 0,    // will be fixed by adjust_exe_header
-            e_ovno: 0,
-        }, work_buffer.len(), relocations.len()
-    )?;
-    debug!("{:?}", new_exe_header);
-    Ok(EXE{header: new_exe_header, data: work_buffer, relocations})
+    Ok(EXE {
+        e_minalloc: exe_header.e_minalloc,
+        e_maxalloc: exe_header.e_maxalloc,
+        e_ss: exepack_header.real_ss,
+        e_sp: exepack_header.real_sp,
+        e_ip: exepack_header.real_ip,
+        e_cs: exepack_header.real_cs,
+        e_ovno: exe_header.e_ovno,
+        body: work_buffer,
+        relocs,
+    })
 }
 
-fn write_exe_header<W: Write>(w: &mut W, header: &EXEHeader) -> io::Result<usize> {
+fn write_exe_relocations<W: Write>(w: &mut W, relocs: &[Pointer]) -> io::Result<usize> {
     let mut n = 0;
-    n += write_u16le(w, header.e_magic)?;
-    n += write_u16le(w, header.e_cblp)?;
-    n += write_u16le(w, header.e_cp)?;
-    n += write_u16le(w, header.e_crlc)?;
-    n += write_u16le(w, header.e_cparhdr)?;
-    n += write_u16le(w, header.e_minalloc)?;
-    n += write_u16le(w, header.e_maxalloc)?;
-    n += write_u16le(w, header.e_ss)?;
-    n += write_u16le(w, header.e_sp)?;
-    n += write_u16le(w, header.e_csum)?;
-    n += write_u16le(w, header.e_ip)?;
-    n += write_u16le(w, header.e_cs)?;
-    n += write_u16le(w, header.e_lfarlc)?;
-    n += write_u16le(w, header.e_ovno)?;
-    Ok(n)
-}
-
-fn write_exe_relocations<W: Write>(w: &mut W, relocations: &[Pointer]) -> io::Result<usize> {
-    let mut n = 0;
-    for pointer in relocations.iter() {
+    for pointer in relocs.iter() {
         n += write_u16le(w, pointer.offset)?;
         n += write_u16le(w, pointer.segment)?;
     }
     Ok(n)
 }
 
-/// Serialize an `EXE` structure to `w`. Ignores the `e_cblp`, `e_cp`, `e_crlc`,
-/// `e_cparhdr`, and `e_lfarlc` fields, instead using value that make sense for
-/// the length of `exe.data` and the number of relocations in `exe.relocations`.
+/// Serialize an `EXE` structure to `w`.
 pub fn write_exe<W: Write>(w: &mut W, exe: &EXE) -> Result<u64, Error> {
-    let header = adjust_exe_header(&exe.header, exe.data.len(), exe.relocations.len())?;
+    let header = exe.make_header()?;
+    debug!("{:?}", header);
     let mut n: u64 = 0;
     n += write_exe_header(w, &header)
         .map_err(|err| {debug!("annotate"); annotate_io_error(err, "writing EXE header")})? as u64;
-    n += write_exe_relocations(w, &exe.relocations)
+    n += write_exe_relocations(w, &exe.relocs)
         .map_err(|err| annotate_io_error(err, "writing EXE relocations"))? as u64;
     assert!(n <= header.header_len());
     while n < header.header_len() {
@@ -1208,8 +1193,8 @@ pub fn write_exe<W: Write>(w: &mut W, exe: &EXE) -> Result<u64, Error> {
         n += w.write(&zeroes[0..cmp::min((header.header_len() - n) as usize, zeroes.len())])
             .map_err(|err| annotate_io_error(err, "writing EXE header padding"))? as u64;
     }
-    w.write_all(&exe.data)
+    w.write_all(&exe.body)
         .map_err(|err| annotate_io_error(err, "writing EXE body"))?;
-    n += exe.data.len() as u64;
+    n += exe.body.len() as u64;
     Ok(n)
 }
