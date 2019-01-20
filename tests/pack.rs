@@ -107,8 +107,6 @@ fn test_pack_lengths() {
     // - the 16-bit EXEPACK dest_len field needs to represent the complete
     //   uncompressed size.
     // - the EXE header cs field needs to be greater than the compressed size.
-    // - the EXE header ss field needs to be greater than the compressed size
-    //   and the uncompressed size.
 
     // Check for an EXE or EXEPACK error in a macro, for meaningful line numbers
     // in test output.
@@ -126,11 +124,9 @@ fn test_pack_lengths() {
     let exepack_size = 18 + exepack::STUB.len() + 32;
 
     // Maximum size compressible inputs.
-    // The main constraint here is the ss field in the EXE header, which must
-    // point after the eventual destination of the EXEPACK block. In the case of
-    // a compressible input, the EXEPACK block will copy itself from inside to
-    // the end of the decompression buffer, and ss can go right after that.
-    let len = 16*0xffff - round_up(exepack_size, 16);
+    // The main constraint here is the dest_len field, representing the size of
+    // the uncompressed output.
+    let len = 16*0xffff;
     let exe = make_compressible_exe(len, 0);
     maybe_save_exe("tests/maxlen_compressible.exe", &exe).unwrap();
     let out = pack(&exe).unwrap();
@@ -140,12 +136,19 @@ fn test_pack_lengths() {
     maybe_save_exe("tests/maxlen+1_compressible.exe", &exe).unwrap();
     want_error!(pack(&exe));
 
-    // Relocations take up additional space, 2 bytes per. The packed relocation
-    // format allows for up to 16*0xffff relocations, but of course an input EXE
-    // can only have up to 0xffff, and furthermore we are limited to the entire
-    // EXEPACK block being 0xffff bytes or less.
+    // Relocations take up space, 2 bytes per; however part of the additional
+    // space can be shared within the decompression buffer (below dest_len).
+    // executable we can compress because the extra space still lies beneath
+    // dest_len. The packed relocation format allows for up to 16*0xffff
+    // relocations, but of course an input EXE can only have up to 0xffff, and
+    // furthermore we are limited to the entire EXEPACK block being 0xffff bytes
+    // or less.
     let num_relocations = (0xffff - exepack_size) / 2;
-    let len = 16*0xffff - round_up(exepack_size + num_relocations*2, 16);
+    // (exepack_size + 2*num_relocations) is now either 0xfffe or 0xffff, which
+    // puts the stack pointer at dest_len + 0x10000 + 16. (The stub uses a
+    // 16-byte stack.) The maximum representable stack pointer is ffff:fff0, so
+    // the maximum dest_len = 16*0xffff+0xfff0 - (0x10000+16) = 16*0xffff - 32.
+    let len = 16*0xfffd;
     let exe = make_compressible_exe(len, num_relocations);
     maybe_save_exe("tests/maxlen_maxrelocs_compressible.exe", &exe).unwrap();
     let out = pack(&exe).unwrap();
@@ -160,13 +163,14 @@ fn test_pack_lengths() {
     want_error!(pack(&exe));
 
     // Maximum size incompressible inputs.
-    // In the case of an incompressible input, the EXEPACK block will copy
-    // itself even further, to the end of itself, so we need at least *two*
-    // EXEPACK blocks after the decompression buffer. Then we also need to
-    // subtract 4 bytes to prevent the compressed buffer from spilling into the
-    // next paragraph (4 bytes of 0x00 padding can be encoded into 4 bytes as
-    // 00 04 00 b1).
-    let len = 16*0xffff - 2*round_up(exepack_size, 16) - 4;
+    // The main constraint here is no longer dest_len, but e_cs in the EXE
+    // header, which points to the start of the EXEPACK block, which comes right
+    // after the end of compressed data. So the compressed data (including the
+    // padding to 16 bits) cannot be larger than 16*0xffff. It turns out that
+    // the largest incompressible stream we can represent in that space has
+    // length 16*0xffff-4, with the 4 trailing bytes 00 04 00 b1 encoding the
+    // trailing 4 bytes of 0x00 padding.
+    let len = 16*0xffff - 4;
     let exe = make_incompressible_exe(len, 0);
     maybe_save_exe("tests/maxlen_incompressible.exe", &exe).unwrap();
     let out = pack(&exe).unwrap();
@@ -176,9 +180,12 @@ fn test_pack_lengths() {
     maybe_save_exe("tests/maxlen+1_incompressible.exe", &exe).unwrap();
     want_error!(pack(&exe));
 
-    // Relocations take up additional space.
+    // Relocations take up additional space. The size of the EXEPACK block
+    // rounds up to 0x10000, so our ceiling is now 16*0xeffd, and the same logic
+    // applies as earlier with respect to subtracting 32 for the stack pointer
+    // and subtracting 4 for compression overhead.
     let num_relocations = (0xffff - exepack_size) / 2;
-    let len = 16*0xffff - 2*round_up(exepack_size + num_relocations*2, 16)-4;
+    let len = 16*0xeffd - 4;
     let exe = make_incompressible_exe(len, num_relocations);
     maybe_save_exe("tests/maxlen_maxrelocs_incompressible.exe", &exe).unwrap();
     let out = pack(&exe).unwrap();

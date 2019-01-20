@@ -792,11 +792,23 @@ pub fn pack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE, E
     // compressor instead refuses to work when it arises: "L1114 file not
     // suitable for /EXEPACK; relink without".
     // https://archive.org/details/bitsavers_ibmpcdos15lReferenceJul88_10507385/page/n128?q=EXEPACK
-    let e_ss = {
+    let (e_ss, e_sp) = {
         let len = cmp::max(uncompressed.len(), data.len()) + exepack_size;
-        let len = len + (16 - len % 16) % 16;
-        checked_u16(len / 16)
-            .ok_or(Error::EXE(EXEFormatError::SSTooLarge(len)))?
+        // Reserve 16 bytes for the stack. The stub doesn't need much.
+        let stack_pointer = round_up(len, 16).unwrap() + 16;
+        // Now, shift as many bits as possible from the segment to the offset,
+        // because we have to encode e_sp in the EXE header and we can compress
+        // slightly larger files if it's smaller.
+        if stack_pointer <= 0xffff {
+            (0u16, stack_pointer as u16)
+        } else {
+            let e_sp = 0xfff0 | (stack_pointer & 0xf);
+            let e_ss = (stack_pointer - e_sp) >> 4;
+            (
+                checked_u16(e_ss).ok_or(Error::EXE(EXEFormatError::SSTooLarge(e_ss)))?,
+                e_sp as u16
+            )
+        }
     };
     let new_exe_header = EXEHeader{
         e_magic: EXE_MAGIC,
@@ -807,7 +819,7 @@ pub fn pack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE, E
         e_minalloc: exe_header.e_minalloc,
         e_maxalloc: exe_header.e_maxalloc,
         e_ss: e_ss,
-        e_sp: 128,
+        e_sp: e_sp,
         e_csum: 0,
         e_ip: 18, // Stub begins just after the EXEPACK header.
         e_cs: e_cs,
