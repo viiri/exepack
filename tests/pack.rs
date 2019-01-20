@@ -92,6 +92,41 @@ fn pack(source: &exepack::EXE) -> Result<exepack::EXE, exepack::Error> {
 }
 
 #[test]
+fn test_pack_relocs() {
+    // two encodings of the largest relocation address EXEPACK can represent.
+    // f000:ffff
+    // ffff:000f
+    for &pointer in [
+        exepack::Pointer{ segment: 0xf000, offset: 0xffff },
+        exepack::Pointer{ segment: 0xffff, offset: 0x000f },
+    ].iter() {
+        let mut exe = make_compressible_exe(128, 0);
+        exe.relocations.push(pointer);
+        exe.header.e_crlc += 1;
+        maybe_save_exe(format!("tests/reloc_{:04x}:{:04x}.exe", pointer.segment, pointer.offset), &exe).unwrap();
+        let out = pack(&exe).unwrap();
+        maybe_save_exe(format!("tests/reloc_{:04x}:{:04x}.packed.exe", pointer.segment, pointer.offset), &out).unwrap();
+    }
+
+    // two encodings of a relocation address too large to represent
+    // f001:fff0
+    // ffff:0010
+    for &pointer in [
+        exepack::Pointer{ segment: 0xf001, offset: 0xfff0 },
+        exepack::Pointer{ segment: 0xffff, offset: 0x0010 },
+    ].iter() {
+        let mut exe = make_compressible_exe(128, 0);
+        exe.relocations.push(pointer);
+        exe.header.e_crlc += 1;
+        maybe_save_exe(format!("tests/reloc_{:04x}:{:04x}.exe", pointer.segment, pointer.offset), &exe).unwrap();
+        match pack(&exe) {
+            Err(exepack::Error::EXEPACK(exepack::EXEPACKFormatError::RelocationAddrTooLarge(_))) => (),
+            x => panic!("{:?} {}", x, pointer)
+        }
+    }
+}
+
+#[test]
 fn test_pack_lengths() {
     // Input files may be too big to compress for various reasons.
     // Compression doesn't always decrease the size: it may stay the
