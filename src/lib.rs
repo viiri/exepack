@@ -112,7 +112,7 @@ pub const EXE_HEADER_LEN: u64 = 28;
 pub struct EXE {
     pub header: EXEHeader,
     pub data: Vec<u8>,
-    pub relocations: Vec<Relocation>,
+    pub relocations: Vec<Pointer>,
 }
 
 // http://www.delorie.com/djgpp/doc/exe/
@@ -150,42 +150,43 @@ impl EXEHeader {
 }
 
 #[derive(Debug, Copy, Clone)]
-pub struct Relocation {
+/// A segment:offset far pointer.
+pub struct Pointer {
     pub segment: u16,
     pub offset: u16,
 }
 
-impl Relocation {
-    fn abs(&self) -> usize {
-        self.segment as usize * 16 + self.offset as usize
+impl Pointer {
+    fn abs(&self) -> u32 {
+        self.segment as u32 * 16 + self.offset as u32
     }
 }
 
-impl fmt::Display for Relocation {
+impl fmt::Display for Pointer {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{:04x}:{:04x}", self.segment, self.offset)
     }
 }
 
-impl cmp::Ord for Relocation {
+impl cmp::Ord for Pointer {
     fn cmp(&self, other: &Self) -> cmp::Ordering {
         self.abs().cmp(&other.abs())
     }
 }
 
-impl cmp::PartialOrd for Relocation {
+impl cmp::PartialOrd for Pointer {
     fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl cmp::PartialEq for Relocation {
+impl cmp::PartialEq for Pointer {
     fn eq(&self, other: &Self) -> bool {
         self.abs() == other.abs()
     }
 }
 
-impl cmp::Eq for Relocation {
+impl cmp::Eq for Pointer {
 }
 
 #[derive(Debug)]
@@ -234,9 +235,9 @@ fn read_exe_header<R: Read>(r: &mut R) -> io::Result<EXEHeader> {
     })
 }
 
-fn read_exe_relocations<R: Read>(r: &mut R, relocations: &mut Vec<Relocation>, n: usize) -> io::Result<()> {
+fn read_exe_relocations<R: Read>(r: &mut R, relocations: &mut Vec<Pointer>, n: usize) -> io::Result<()> {
     for _ in 0..n {
-        relocations.push(Relocation {
+        relocations.push(Pointer {
             offset: read_u16le(r)?,
             segment: read_u16le(r)?,
         });
@@ -247,7 +248,7 @@ fn read_exe_relocations<R: Read>(r: &mut R, relocations: &mut Vec<Relocation>, n
 /// Read an EXE header (including relocations and padding) and do consistency
 /// checks on it. Reads exactly `header.header_len()` bytes from `r`. Doesn't
 /// support relocation entries stored outside the header.
-fn read_and_check_exe_header<R: Read>(r: &mut R) -> Result<(EXEHeader, Vec<Relocation>), Error> {
+fn read_and_check_exe_header<R: Read>(r: &mut R) -> Result<(EXEHeader, Vec<Pointer>), Error> {
     let exe_header = read_exe_header(r)
         .map_err(|err| annotate_io_error(err, "reading EXE header"))?;
     debug!("{:?}", exe_header);
@@ -337,7 +338,7 @@ pub enum EXEPACKFormatError {
     Gap(usize, usize),
     TooManyEXERelocations(usize),
     UncompressedTooLong(usize),
-    RelocationAddrTooLarge(Relocation),
+    RelocationAddrTooLarge(Pointer),
     EXEPACKTooLong(usize),
 }
 
@@ -374,8 +375,8 @@ impl fmt::Display for EXEPACKFormatError {
                 write!(f, "too many relocation entries ({}) to represent in an EXE header", num_relocations),
             &EXEPACKFormatError::UncompressedTooLong(len) =>
                 write!(f, "uncompressed size {} is too large to represent in an EXEPACK header", len),
-            &EXEPACKFormatError::RelocationAddrTooLarge(ref relocation) =>
-                write!(f, "relocation address {} is too large to represent in the EXEPACK table", relocation),
+            &EXEPACKFormatError::RelocationAddrTooLarge(ref pointer) =>
+                write!(f, "relocation address {} is too large to represent in the EXEPACK table", pointer),
             &EXEPACKFormatError::EXEPACKTooLong(len) =>
                 write!(f, "EXEPACK area is too long at {} bytes", len),
         }
@@ -662,9 +663,9 @@ pub fn compress(output: &mut Vec<u8>, input: &[u8]) {
 }
 
 /// Encode a compressed relocation table.
-fn encode_relocations(buf: &mut Vec<u8>, relocations: &[Relocation]) -> Result<(), Error> {
+fn encode_relocations(buf: &mut Vec<u8>, relocations: &[Pointer]) -> Result<(), Error> {
     // http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK#Relocation_Table
-    let mut relocations: Vec<&Relocation> = relocations.iter().collect();
+    let mut relocations: Vec<&Pointer> = relocations.iter().collect();
     relocations.sort();
     let mut i = 0;
     for segment_index in 0..16 {
@@ -676,8 +677,8 @@ fn encode_relocations(buf: &mut Vec<u8>, relocations: &[Relocation]) -> Result<(
         // have contained at least 0x10000 relocations, which is impossible to
         // represent in the e_crlc field.
         push_u16le(buf, checked_u16(j - i).unwrap());
-        for relocation in relocations[i..j].iter() {
-            push_u16le(buf, (relocation.abs() & 0xffff) as u16);
+        for pointer in relocations[i..j].iter() {
+            push_u16le(buf, (pointer.abs() & 0xffff) as u16);
         }
         i = j;
     }
@@ -971,15 +972,15 @@ fn read_stub<R: Read>(r: &mut R) -> io::Result<(Vec<u8>, bool)> {
 }
 
 // http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK#Relocation_Table
-fn read_relocations<R: Read>(r: &mut R) -> io::Result<Vec<Relocation>> {
+fn read_relocations<R: Read>(r: &mut R) -> io::Result<Vec<Pointer>> {
     let mut relocations = Vec::new();
     for i in 0..16 {
         let num_relocations = read_u16le(r)?;
         for _ in 0..num_relocations {
             let offset = read_u16le(r)?;
-            relocations.push(Relocation {
+            relocations.push(Pointer {
                 segment: i * 0x1000,
-                offset,
+                offset: offset,
             });
         }
     }
@@ -1131,11 +1132,11 @@ fn write_exe_header<W: Write>(w: &mut W, header: &EXEHeader) -> io::Result<usize
     Ok(n)
 }
 
-fn write_exe_relocations<W: Write>(w: &mut W, relocations: &[Relocation]) -> io::Result<usize> {
+fn write_exe_relocations<W: Write>(w: &mut W, relocations: &[Pointer]) -> io::Result<usize> {
     let mut n = 0;
-    for relocation in relocations.iter() {
-        n += write_u16le(w, relocation.offset)?;
-        n += write_u16le(w, relocation.segment)?;
+    for pointer in relocations.iter() {
+        n += write_u16le(w, pointer.offset)?;
+        n += write_u16le(w, pointer.segment)?;
     }
     Ok(n)
 }

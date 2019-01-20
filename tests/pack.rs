@@ -27,7 +27,7 @@ fn incompressible_body(len: usize) -> Vec<u8> {
     [0x66, 0x90].iter().cloned().cycle().take(len).collect()
 }
 
-fn make_exe(body: Vec<u8>, relocations: Vec<exepack::Relocation>) -> exepack::EXE {
+fn make_exe(body: Vec<u8>, relocations: Vec<exepack::Pointer>) -> exepack::EXE {
     let header_len = round_up(exepack::EXE_HEADER_LEN as usize + 4 * relocations.len(), 512);
     let (e_cblp, e_cp) = exepack::encode_exe_len(header_len + body.len()).unwrap();
     exepack::EXE{
@@ -52,10 +52,11 @@ fn make_exe(body: Vec<u8>, relocations: Vec<exepack::Relocation>) -> exepack::EX
     }
 }
 
-fn make_relocations(n: usize) -> Vec<exepack::Relocation> {
-    (0..n).map(|address|
-        exepack::Relocation{segment: (address >> 12) as u16, offset: (address & 0xf) as u16}
-    ).collect()
+fn make_relocations(n: usize) -> Vec<exepack::Pointer> {
+    (0..n).map(|address| exepack::Pointer {
+        segment: (address >> 4) as u16,
+        offset: (address & 0xf) as u16,
+    }).collect()
 }
 
 fn make_compressible_exe(body_len: usize, num_relocations: usize) -> exepack::EXE {
