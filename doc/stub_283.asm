@@ -31,31 +31,30 @@
 ; https://archive.org/download/TheAdventuresOfCaptainComic/AdventuresOfCaptainComicEpisode1The-PlanetOfDeathR2sw1988michaelA.Denioaction.zip/COMIC.EXE
 
 BITS 16
+ORG 18	; EXEPACK header is 18 bytes.
 
-exepack_start:
+; Offsets of fields in the EXEPACK header.
+real_IP		equ	0
+real_CS		equ	2
+mem_start	equ	4
+exepack_size	equ	6
+real_SP		equ	8
+real_SS		equ	10
+dest_len	equ	12
+skip_len	equ	12
+signature	equ	16	; unused
 
-real_IP:	dw	0x0000
-real_CS:	dw	0x0000
-mem_start:	dw	0x0000	; uninitialized and filled in by the EXEPACK code
-exepack_size:	dw	(exepack_end - exepack_start)
-real_SP:	dw	0x0000
-real_SS:	dw	0x0000
-dest_len:	dw	0x0000	; has a skip_len built in
-skip_len:	dw	0x0000
-signature:	db	'RB'
-
-; |mem_start		     |exepack_start			|mem_start+dest_len
-; [compressed data] skip_len [EXEPACK]		       skip_len [EXEPACK copy]
-; \------------------------- dest_len -------------------------/
-
-; On load, es is set to the segment of the 256-byte Program Segment Prefix (PSP).
-; cs is set to exepack_start (beginning of EXEPACK header).
-; ip is set to copy_decompressor_stub.
-copy_decompressor_stub:
+; On load,
+; * ds and es are set to the segment of the Program Segment Prefix
+;   (PSP). The compressed data starts 256 bytes beyond that, at an
+;   address we call mem_start.
+; * cs is set to real_IP (beginning of EXEPACK header).
+; * ip is set to copy_exepack_block.
+copy_exepack_block:
 	mov ax, es
-	add ax, word 0x10	; ax = es + 0x10 (segment immediately after the PSP)
+	add ax, 0x10		; ax = es+16 (mem_start, 256 bytes past PSP, beginning of compressed data)
 	push cs
-	pop ds			; ds = cs (exepack_start)
+	pop ds			; ds = cs (beginning of EXEPACK variables, end of compressed data)
 	mov [mem_start], ax
 	add ax, [dest_len]
 	mov es, ax		; es = mem_start + dest_len
@@ -64,10 +63,10 @@ copy_decompressor_stub:
 	dec di
 	mov si, di		; si = exepack_size - 1
 	std			; copy operations go backwards
-	rep movsb		; copy exepack_size bytes from ds (exepack_start; i.e., this code) to es (mem_start + dest_len)
+	rep movsb		; copy exepack_size bytes from ds (i.e., this code) to es (mem_start + dest_len)
 	mov dx, [skip_len]
 	push ax			; segment to jump to (mem_start + dest_len)
-	mov ax, (decompress - exepack_start)
+	mov ax, decompress
 	push ax			; offset to jump to (i.e., label "decompress" in the copied block of code)
 	retf
 
@@ -75,8 +74,8 @@ decompress:
 	mov bx, es		; bx = mem_start + dest_len
 	mov ax, ds
 	sub ax, dx		; subtract skip_len
-	mov ds, ax		; ds = exepack_start - skip_len
-	mov es, ax		; es = exepack_start - skip_len (scratch; used for the upcoming scasb)
+	mov ds, ax
+	mov es, ax		; scratch; used for the upcoming scasb
 	mov di, 15		; di = final byte in final paragraph
 	mov cx, 16
 	mov al, 0xff
@@ -139,10 +138,10 @@ decompress:
 	test al, 1
 	je .loop		; repeat until (command & 0x01) == 1
 
-	mov si, (relocation_entries - exepack_start)
+	mov si, relocation_entries
 	push cs
-	pop ds			; ds = exepack_start
-	mov bx, word [mem_start]	; bx = mem_start
+	pop ds			; ds = beginning of EXEPACK block
+	mov bx, [mem_start]	; bx = mem_start
 	cld			; copy operations go forwards
 	xor dx, dx		; section_start = 0
 apply_relocations:
@@ -161,7 +160,7 @@ apply_relocations:
 	cmp di, 0xffff
 	je .write_relocation_ffff	; address with offset of 0xffff needs special handling
 	; else write the relocation entry
-	add word [es:di], bx	; *addr += mem_start
+	add [es:di], bx	; *addr += mem_start
 .relocation_written:
 	loop .next_address
 .next_section:
@@ -177,16 +176,16 @@ apply_relocations:
 	mov es, ax		; adjust segment and offset
 	sub di, 0x10		; so that di == 0xffef
 	; write the relocation entry
-	add word [es:di], bx	; *addr += mem_start
+	add [es:di], bx	; *addr += mem_start
 	dec ax
 	mov es, ax		; restore segment to what it was
 	jmp .relocation_written ; back to address loop
 .loop_end:
 	mov ax, bx		; ax = mem_start
-	mov di, word [real_SP]	; di = real_SP
-	mov si, word [real_SS]
+	mov di, [real_SP]	; di = real_SP
+	mov si, [real_SS]
 	add si, ax		; si = mem_start + real_SS
-	add word [real_CS], ax	; real_CS += mem_start
+	add [real_CS], ax	; real_CS += mem_start
 	sub ax, 0x10
 	mov ds, ax		; es = mem_start - 0x10 (segment of start of PSP)
 	mov es, ax		; es = mem_start - 0x10 (segment of start of PSP)
@@ -210,21 +209,3 @@ error:
 .errmsg:	db	'Packed file is corrupt'
 
 relocation_entries:
-	dw	0x0000
-	dw	0x0000
-	dw	0x0000
-	dw	0x0000
-	dw	0x0000
-	dw	0x0000
-	dw	0x0000
-	dw	0x0000
-	dw	0x0000
-	dw	0x0000
-	dw	0x0000
-	dw	0x0000
-	dw	0x0000
-	dw	0x0000
-	dw	0x0000
-	dw	0x0000
-
-exepack_end:

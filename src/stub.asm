@@ -37,11 +37,11 @@ signature	equ	16	; unused
 ; * ds and es are set to the segment of the Program Segment Prefix
 ;   (PSP). The compressed data starts 256 bytes beyond that, at an
 ;   address we call mem_start.
-; * cs is set to exepack_start (beginning of EXEPACK header).
-; * ip is set to copy_decompressor_stub.
+; * cs is set to real_IP (beginning of EXEPACK header).
+; * ip is set to copy_exepack_block.
 ; * ax contains a value that we must restore before jumping to the
 ;   decompressed program.
-copy_decompressor_stub:
+copy_exepack_block:
 	mov bp, ax		; save ax
 
 	mov bx, es
@@ -105,7 +105,7 @@ dec_es_di:
 
 decompress:
 	; Skip past 0xff padding.
-	xor si, si		; ds:si = exepack_start, just past the end of the compressed data + padding
+	xor si, si		; ds:si = real_IP, just past the end of the compressed data + padding
 .padding_loop:
 	call dec_ds_si
 	mov al, [ds:si]

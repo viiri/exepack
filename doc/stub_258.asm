@@ -39,8 +39,8 @@
 ; 	push es			; mem_start + dest_len
 ; 	mov ax, ds
 ; 	dec ax			; move back 1 paragraph (equivalent of skip_len == 1)
-; 	mov ds, ax		; ds = exepack_start - 1
-; 	mov es, ax		; es = exepack_start - 1 (scratch; used for the upcoming scasb)
+; 	mov ds, ax
+;	mov es, ax		; scratch; used for the upcoming scasb
 ; 	mov di, 15		; di = final byte in final paragraph
 ; 	push di
 ; 	mov cx, 16
@@ -111,26 +111,29 @@
 ; 	nop
 
 BITS 16
+ORG 16	; EXEPACK header is 16 bytes.
 
-exepack_start:
+; Offsets of fields in the EXEPACK header.
+real_IP		equ	0
+real_CS		equ	2
+mem_start	equ	4
+exepack_size	equ	6
+real_SP		equ	8
+real_SS		equ	10
+dest_len	equ	12
+signature	equ	14	; unused
 
-real_IP:	dw	0x0000
-real_CS:	dw	0x0000
-mem_start:	dw	0x0000	; uninitialized and filled in by the EXEPACK code
-exepack_size:	dw	(exepack_end - exepack_start)
-real_SP:	dw	0x0000
-real_SS:	dw	0x0000
-dest_len:	dw	0x0000
-signature:	db	'RB'
-
-; On load, es is set to the segment of the 256-byte Program Segment Prefix (PSP).
-; cs is set to exepack_start (beginning of EXEPACK header).
-; ip is set to copy_decompressor_stub.
-copy_decompressor_stub:
+; On load,
+; * ds and es are set to the segment of the Program Segment Prefix
+;   (PSP). The compressed data starts 256 bytes beyond that, at an
+;   address we call mem_start.
+; * cs is set to real_IP (beginning of EXEPACK header).
+; * ip is set to copy_exepack_block.
+copy_exepack_block:
 	mov ax, es
-	add ax, word 0x10	; ax = es + 0x10 (segment immediately after the PSP)
+	add ax, 0x10		; ax = es+16 (mem_start, 256 bytes past PSP, beginning of compressed data)
 	push cs
-	pop ds			; ds = cs (exepack_start)
+	pop ds			; ds = cs (beginning of EXEPACK variables, end of compressed data)
 	mov [mem_start], ax
 	add ax, [dest_len]
 	mov es, ax		; es = mem_start + dest_len
@@ -139,9 +142,9 @@ copy_decompressor_stub:
 	dec di
 	mov si, di		; si = exepack_size - 1
 	std			; copy operations go backwards
-	rep movsb		; copy exepack_size bytes from ds (exepack_start; i.e., this code) to es (mem_start + dest_len)
+	rep movsb		; copy exepack_size bytes from ds (i.e., this code) to es (mem_start + dest_len)
 	push ax			; segment to jump to (mem_start + dest_len)
-	mov ax, (decompress - exepack_start)
+	mov ax, decompress
 	push ax			; offset to jump to (i.e., label "decompress" in the copied block of code)
 	retf
 
@@ -149,8 +152,8 @@ decompress:
 	mov bx, es		; bx = mem_start + dest_len
 	mov ax, ds
 	dec ax			; move back 1 paragraph (equivalent of skip_len == 1)
-	mov ds, ax		; ds = exepack_start - 1
-	mov es, ax		; es = exepack_start - 1 (scratch; used for the upcoming scasb)
+	mov ds, ax
+	mov es, ax		; scratch; used for the upcoming scasb
 	mov di, 15		; di = final byte in final paragraph
 	mov cx, 16
 	mov al, 0xff
@@ -213,10 +216,10 @@ decompress:
 	test al, 1
 	je .loop		; repeat until (command & 0x01) == 1
 
-	mov si, (relocation_entries - exepack_start)
+	mov si, relocation_entries
 	push cs
-	pop ds			; ds = exepack_start
-	mov bx, word [mem_start]	; bx = mem_start
+	pop ds			; ds = beginning of EXEPACK block
+	mov bx, [mem_start]	; bx = mem_start
 	cld			; copy operations go forwards
 	xor dx, dx		; section_start = 0
 apply_relocations:
@@ -233,7 +236,7 @@ apply_relocations:
 	lodsw
 	mov di, ax		; addr = *(uint16_t *) si++
 	; write the relocation entry (bug if di == 0xffff)
-	add word [es:di], bx	; *addr += mem_start
+	add [es:di], bx		; *addr += mem_start
 	loop .next_address
 .next_section:
 	cmp dx, 0xf000
@@ -242,10 +245,10 @@ apply_relocations:
 	jmp .loop
 .loop_end:
 	mov ax, bx		; ax = mem_start
-	mov di, word [real_SP]	; di = real_SP
-	mov si, word [real_SS]
+	mov di, [real_SP]	; di = real_SP
+	mov si, [real_SS]
 	add si, ax		; si = mem_start + real_SS
-	add word [real_CS], ax	; real_CS += mem_start
+	add [real_CS], ax	; real_CS += mem_start
 	sub ax, 0x10
 	mov ds, ax		; es = mem_start - 0x10 (segment of start of PSP)
 	mov es, ax		; es = mem_start - 0x10 (segment of start of PSP)
@@ -269,21 +272,3 @@ error:
 .errmsg:	db	'Packed file is corrupt'
 
 relocation_entries:
-	dw	0x0000
-	dw	0x0000
-	dw	0x0000
-	dw	0x0000
-	dw	0x0000
-	dw	0x0000
-	dw	0x0000
-	dw	0x0000
-	dw	0x0000
-	dw	0x0000
-	dw	0x0000
-	dw	0x0000
-	dw	0x0000
-	dw	0x0000
-	dw	0x0000
-	dw	0x0000
-
-exepack_end:
