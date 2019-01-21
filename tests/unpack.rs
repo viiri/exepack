@@ -8,7 +8,7 @@ use std::str;
 
 // If true, save EXE generated during the course of testing to the filesystem,
 // so you can examine/test them externally.
-const SAVE_EXES: bool = true;
+const SAVE_EXES: bool = false;
 
 fn store_u16le(buf: &mut [u8], i: usize, v: u16) {
     buf[i] = v as u8;

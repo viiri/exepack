@@ -6,7 +6,7 @@ use std::path;
 
 // If true, save EXE generated during the course of testing to the filesystem,
 // so you can examine/test them externally.
-const SAVE_EXES: bool = true;
+const SAVE_EXES: bool = false;
 
 fn save_exe<P: AsRef<path::Path>>(path: P, contents: &[u8]) -> Result<(), exepack::Error> {
     let f = fs::File::create(path)?;

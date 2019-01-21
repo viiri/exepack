@@ -10,7 +10,7 @@ use std::path;
 
 // If true, save EXE generated during the course of testing to the filesystem,
 // so you can examine/test them externally.
-const SAVE_EXES: bool = true;
+const SAVE_EXES: bool = false;
 
 // generate a body of the given length, with repeating bytes so it is easily
 // compressible.
