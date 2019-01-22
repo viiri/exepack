@@ -18,23 +18,28 @@ allows expansion: can it handle the case where len(compressed) >
 	len(uncompressed)?
 error string: the human-readable error message printed out when there is
 	a decompression failure.
+UNP identification:
+	how the file is identified by UNP (http://unp.bencastricum.nl/), an
+	executable unpacker. UNP identifies by matching the offsets to certain
+	byte patterns in a table. See label EPIDData in the file
+	exe/eexpk.asm in the UNP source code.
 
-			explicit	restores			relocate	allows		error
-		length	skip_len	ax		A20 bug		0xffff bug	expansion	string
---------------------------------------------------------------------------------------------------------------
-stub_258.asm	258	no		no		yes		yes		no		"Packed file is corrupt"
-stub_258_es.asm	258	no		no		yes		yes		no		"Fichero corrompido    "
-stub_279.asm	279	no		no		yes		no		no		"Packed file is corrupt"
-stub_277.asm	277	no		no		yes		no		no		"Packed file is corrupt"
-stub_283.asm	283	yes		no		yes		no		no		"Packed file is corrupt"
-stub_290.asm	290	no		yes		no		no		no		"Packed file is corrupt"
+			explicit	restores			relocate	allows		error				UNP
+		length	skip_len	ax		A20 bug		0xffff bug	expansion	string				identification
+------------------------------------------------------------------------------------------------------------------------------------------------------
+stub_258.asm	258	no		no		yes		yes		no		"Packed file is corrupt"	"EXEPACK V4.00"
+stub_258_es.asm	258	no		no		yes		yes		no		"Fichero corrompido    "	"EXEPACK V4.00"
+stub_279.asm	279	no		no		yes		no		no		"Packed file is corrupt"	"EXEPACK V4.03"
+stub_277.asm	277	no		no		yes		no		no		"Packed file is corrupt"	"LINK V3.60, V3.64, V3.65, or V5.01.21 /EXEPACK"
+stub_283.asm	283	yes		no		yes		no		no		"Packed file is corrupt"	"EXEPACK V4.05 or V4.06"
+stub_290.asm	290	no		yes		no		no		no		"Packed file is corrupt"	"LINK V3.69 /EXEPACK"
 
 The custom decompression stub emitted by this program aims to fix the
 problems with all the existing stubs, while fitting into 283 bytes and
 using an explicit skip_len, which seems to be the most common format in
 the wild.
 
-			explicit					relocate	allows		error
-		length	skip_len	saves ax	A20 bug		0xffff bug	expansion	string
---------------------------------------------------------------------------------------------------------------
-src/stub.asm	283	yes		yes		no		no		yes		"Packed file is corrupt"
+			explicit					relocate	allows		error				UNP
+		length	skip_len	saves ax	A20 bug		0xffff bug	expansion	string				identification
+------------------------------------------------------------------------------------------------------------------------------------------------------
+src/stub.asm	283	yes		yes		no		no		yes		"Packed file is corrupt"	<none>

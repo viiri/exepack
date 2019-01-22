@@ -19,6 +19,12 @@
 ; Uses an implicit skip_len. Saves and restores the ax register. Fixes
 ; the negative-segment wraparound bug.
 ;
+; UNP calls this version "LINK V3.69 /EXEPACK", because it has
+; 8ec0bf0f00 (mov es,ax; mov di,15) ending at offset 0x52; 26011d
+; (add [es:di],bx) at offset 0xc0; and 2eff2f (jmp far [cs:bx]) at
+; offset 0x103. From exe/eexpk.asm in http://unp.bencastricum.nl/unp4-src.zip:
+; dw 0052h, 00C0h, 0103h, LINK, _V3_69, _, FwdS, EXEPACK           , 0
+;
 ; Sample:
 ; https://archive.org/download/MicroCom_20_Hog_Bear_Adventure/MicroCom_20_Hog_Bear_Adventure.zip/hogbear.exe
 ;

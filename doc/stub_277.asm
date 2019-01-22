@@ -19,6 +19,14 @@
 ; two instances of the "or di, 0xfff0" instruction: "83cff0" instead of
 ; "81cff0ff".
 ;
+; UNP calls this version "LINK V3.60, V3.64, V3.65, or V5.01.21 /EXEPACK",
+; because it has 8ec0bf0f00 (mov es,ax; mov di,15) ending at offset
+; 0x50; 26011d (add [es:di],bx) at offset 0xb5; and 2eff2f
+; (jmp far [cs:bx]) at offset 0xf6. From exe/eexpk.asm in
+; http://unp.bencastricum.nl/unp4-src.zip:
+; dw 0050h, 00B5h, 00F6h, LINK, _V3_60, C, _V3_64, C, _V3_65
+; dw                      _or, _V5_01_21, _, FwdS, EXEPACK         , 0
+;
 ; Sample:
 ; https://archive.org/download/MicroCom_374_Cash-Track/MicroCom_374_Cash-Track.zip/cashtrac.exe
 

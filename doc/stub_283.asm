@@ -15,7 +15,7 @@
 ; \xd8\x8e\xc0\xbb\x00\x00\xfa\x8e\xd6\x8b\xe7\xfb\x2e\xff\x2f\xb4\
 ; \x40\xbb\x02\x00\xb9\x16\x00\x8c\xca\x8e\xda\xba\x17\x01\xcd\x21\
 ; \xb8\xff\x4c\xcd\x21Packed file is corrupt"
-
+;
 ; Seems to be the most common decompression stub. Matches the format
 ; described at http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK#File_Format
 ; and understood by https://github.com/w4kfu/unEXEPACK and
@@ -25,6 +25,12 @@
 ; wrapping behavior depends on the state of the A20 gate—this is the
 ; cause of the notorious "Packed file is corrupt" error on some PCs when
 ; an EXEPACK-packed executable is loaded in the first 64 KB of RAM.
+
+; UNP calls this version "EXEPACK V4.05 or V4.06", because it has
+; 8ec0bf0f00 (mov es,ax; mov di,15) ending at offset 0x58; 26011d
+; (add [es:di],bx) at offset 0xbd; and 2eff2f (jmp far [cs:bx]) at
+; offset 0xfe. From exe/eexpk.asm in http://unp.bencastricum.nl/unp4-src.zip:
+; dw 0058h, 00BDh, 00FEh, EXEPACK, _V4_05, _or, _V4_06             , 0
 ;
 ; Samples:
 ; https://archive.org/download/msdos_Mega_Man/msdos_Mega_Man.zip/mm.exe

@@ -17,6 +17,12 @@
 ; \xb8\xff\x4c\xcd\x21Fichero corrompido    "
 ;
 ; Identical to stub_283, except that the error message is in Spanish.
+;
+; UNP calls this version "EXEPACK V4.05 or V4.06", because it has
+; 8ec0bf0f00 (mov es,ax; mov di,15) ending at offset 0x58; 26011d
+; (add [es:di],bx) at offset 0xbd; and 2eff2f (jmp far [cs:bx]) at
+; offset 0xfe. From exe/eexpk.asm in http://unp.bencastricum.nl/unp4-src.zip:
+; dw 0058h, 00BDh, 00FEh, EXEPACK, _V4_05, _or, _V4_06             , 0
 
 BITS 16
 ORG 18	; EXEPACK header is 18 bytes.

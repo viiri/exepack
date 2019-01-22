@@ -23,6 +23,12 @@
 ; will wrap around and be written at offset 0 in the same segment,
 ; instead of offset 0 in the following segment.
 ;
+; UNP calls this version "EXEPACK V4.00", because it has 8ec0bf0f00
+; (mov es,ax; mov di,15) ending at offset 0x50; 26011d (add [es:di],bx)
+; at offset 0xb2; and 2eff2f (jmp far [cs:bx]) at offset 0xe3. From
+; exe/eexpk.asm in http://unp.bencastricum.nl/unp4-src.zip:
+; dw 0050h, 00B2h, 00E3h, EXEPACK, _V4_00                          , 0
+;
 ; Sample:
 ; https://archive.org/download/TheAdventuresOfCaptainComic/AdventuresOfCaptainComicEpisode1The-PlanetOfDeathsw1988michaelA.Denioaction.zip/COMIC.EXE
 ;
