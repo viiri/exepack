@@ -1,5 +1,10 @@
 == Different versions of EXEPACK
 
+http://unp.bencastricum.nl/
+"EXEPACK V4.00, V4.03, V4.05, V4.06"
+"LINK /EXEPACK V3.60, V3.64, V3.65, V3.69, V5.01.21"
+exe/eexpk.asm has some signatures.
+
 https://github.com/w4kfu/unEXEPACK/issues/3
 https://github.com/horsicq/Detect-It-Easy/blob/master/db/MSDOS/EXEPACK.2.sg
 https://github.com/horsicq/Detect-It-Easy/blob/master/db/MSDOS/WordPerfect%20EXEPack.2.sg
