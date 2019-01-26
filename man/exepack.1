@@ -47,6 +47,13 @@ Decompress a file.
 exepack -d packed.exe unpacked.exe
 .ft P
 .RE
+.P
+Use in a pipeline.
+.RS
+.ft CW
+unzip -p comic.zip comic.exe | exepack -d /dev/stdin unpacked.exe
+.ft P
+.RE
 .SH NOTES
 .P
 This program only works with 16-bit DOS MZ executables.
