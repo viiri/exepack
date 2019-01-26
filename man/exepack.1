@@ -1,0 +1,86 @@
+.\" https://home.fnal.gov/~mengel/man_page_notes.html
+.TH EXEPACK 1 "2019-01-26"
+.nh .\" Disable hyphenation.
+.ad l .\" Ragged right
+.SH NAME
+exepack \- compress or decompress DOS executables with EXEPACK
+.SH SYNOPSIS
+.B exepack
+.RI [ OPTION ]...\&
+.I INPUT.EXE
+.I OUTPUT.EXE
+.SH DESCRIPTION
+.P
+Compress (the default)
+or decompress (\c
+.B -d
+option)
+a DOS executable with EXEPACK,
+a format for self-extracting executables.
+.TP
+.B --debug
+Print runtime debugging information to standard error.
+.TP
+.B -d
+.TQ
+.B --decompress
+Decompress mode.
+.TP
+.B --help
+Display help and exit.
+.P
+The exit status is 0 for successful operation,
+255 for an EXEPACK format error,
+or 1 for any other error.
+.SH EXAMPLES
+.P
+Compress a file.
+.RS
+.ft CW
+exepack unpacked.exe packed.exe
+.ft P
+.RE
+.P
+Decompress a file.
+.RS
+.ft CW
+exepack -d packed.exe unpacked.exe
+.ft P
+.RE
+.SH NOTES
+.P
+This program only works with 16-bit DOS MZ executables.
+It does not work with other formats
+that happen to have a \(lq.exe\(rq filename extension,
+such as the PE (Portable Executable) format
+used for Windows executables,
+If you try to compress a PE file,
+you will only end up compressing the DOS stub
+(the short program that prints
+\(lqThis program cannot be run in DOS mode\(rq).
+.P
+There are several versions of the EXEPACK format,
+with slight differences.
+This program heuristically tries to determine
+which format is in use.
+It is known to work with at least these versions
+(version numbers were determined by comparing
+known formats against the labeled signatures
+in Ben Castricum's UNP utility):
+.IP \(bu
+EXEPACK 4.00, 4.03, 4.05, 4.06
+.IP \(bu
+LINK /EXEPACK 3.60, 3.64, 3.65, 3.69, 5.01.21
+.P
+When this program compresses, it tries to produce files
+that, in addition to being self-extracting,
+use the same file offsets as EXEPACK 4.05/4.06,
+which is the format documented at
+http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK#File_Format.
+This is to retain compatibility with other external decompressors.
+.SH SEE ALSO
+.P
+https://www.bamsoftware.com/software/exepack/
+.SH AUTHOR
+.P
+David Fifield <david@bamsoftware.com>
