@@ -380,7 +380,7 @@ fn trim_input_from_header<R: Read>(
         // file containing it. Emit a warning that we are ignoring trailing
         // garbage.
         if header.exe_len() < file_len {
-            eprintln!("warning: EXE file size is {}; ignoring {} trailing bytes", file_len, file_len - header.exe_len());
+            eprintln!("warning: EXE file size is {}; ignoring {} trailing bytes", header.exe_len(), file_len - header.exe_len());
         }
     }
     input.take(header.exe_len().checked_sub(header.header_len()).unwrap())
