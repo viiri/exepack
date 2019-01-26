@@ -1,0 +1,41 @@
+https://www.bamsoftware.com/software/exepack/
+David Fifield <david@bamsoftware.com>
+
+exepack is a compressor/decompressor for DOS executables in EXEPACK
+format.
+
+Compression:
+	exepack unpacked.exe packed.exe
+Decompression:
+	exepack -d packed.exe unpacked.exe
+
+It's written in Rust; you need rustc and cargo. To build:
+	cargo build --release
+The compiled program will be in target/release/exepack. There is
+documentation in the doc and man directories.
+
+An EXEPACK-packed file consists of compressed data, some metadata, and
+an executable "stub" which, when run, decompresses the rest of the file
+and jumps to the entry point of the decompressed executable. When
+decompressing, this program understands several versions of EXEPACK (see
+doc/README.stubs). When compressing, it tries to produce output that is
+compatible, in terms of file offsets and metadata, with the format of
+doc/stub_283.asm, which is the format documented at
+http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK#File_Format and
+appears to be the most common. It however uses its own custom stub, one
+designed to fix the bugs that are present in the other stubs.
+
+If the program encounters an executable that resembles EXEPACK format
+but which it can't handle, it will print out the contents of the EXEPACK
+header and executable stub, and ask you to email them to the author so
+that the format can be supported in the future.
+
+This program only works with 16-bit DOS MZ executables. It does not work
+with other formats that happen to have a ".exe" filename extension, such
+as the PE (Portable Executable) format used for Windows executables, If
+you try to compress a PE file, you will only end up compressing the DOS
+stub (the short program that prints "This program cannot be run in DOS
+mode", not to be confused with the EXEPACK stub).
+
+Recommended alternative if this program doesn't suit your needs:
+https://github.com/w4kfu/unEXEPACK
