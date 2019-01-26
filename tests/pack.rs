@@ -24,7 +24,7 @@ fn incompressible_body(len: usize) -> Vec<u8> {
 }
 
 fn make_exe(body: Vec<u8>, relocs: Vec<exepack::Pointer>) -> exepack::EXE {
-    exepack::EXE{
+    exepack::EXE {
         e_minalloc: 0xffff,
         e_maxalloc: 0xffff,
         e_ss: 0x0000,
@@ -114,7 +114,7 @@ fn test_pack_relocs() {
         maybe_save_exe(format!("tests/reloc_{:04x}:{:04x}.exe", pointer.segment, pointer.offset), &exe).unwrap();
         match pack(&exe) {
             Err(exepack::Error::EXEPACK(exepack::EXEPACKFormatError::RelocationAddrTooLarge(_))) => (),
-            x => panic!("{:?} {}", x, pointer)
+            x => panic!("{:?} {}", x, pointer),
         }
     }
 }
@@ -154,13 +154,13 @@ fn test_pack_lengths() {
     // Maximum size compressible inputs.
     // The main constraint here is the dest_len field, representing the size of
     // the uncompressed output.
-    let len = 16*0xffff;
+    let len = 16 * 0xffff;
     let exe = make_compressible_exe(len, 0);
     maybe_save_exe("tests/maxlen_compressible.exe", &exe).unwrap();
     let out = pack(&exe).unwrap();
     maybe_save_exe("tests/maxlen_compressible.packed.exe", &out).unwrap();
     // 1 byte longer is an error.
-    let exe = make_compressible_exe(len+1, 0);
+    let exe = make_compressible_exe(len + 1, 0);
     maybe_save_exe("tests/maxlen+1_compressible.exe", &exe).unwrap();
     want_error!(pack(&exe));
 
@@ -176,17 +176,17 @@ fn test_pack_lengths() {
     // puts the stack pointer at dest_len + 0x10000 + 16. (The stub uses a
     // 16-byte stack.) The maximum representable stack pointer is ffff:fff0, so
     // the maximum dest_len = 16*0xffff+0xfff0 - (0x10000+16) = 16*0xffff - 32.
-    let len = 16*0xfffd;
+    let len = 16 * 0xfffd;
     let exe = make_compressible_exe(len, num_relocs);
     maybe_save_exe("tests/maxlen_maxrelocs_compressible.exe", &exe).unwrap();
     let out = pack(&exe).unwrap();
     maybe_save_exe("tests/maxlen_maxrelocs_compressible.packed.exe", &out).unwrap();
     // 1 byte longer is an error.
-    let exe = make_compressible_exe(len+1, num_relocs);
+    let exe = make_compressible_exe(len + 1, num_relocs);
     maybe_save_exe("tests/maxlen+1_maxrelocs_compressible.exe", &exe).unwrap();
     want_error!(pack(&exe));
     // 1 more relocation is an error.
-    let exe = make_compressible_exe(len, num_relocs+1);
+    let exe = make_compressible_exe(len, num_relocs + 1);
     maybe_save_exe("tests/maxlen_maxrelocs+1_compressible.exe", &exe).unwrap();
     want_error!(pack(&exe));
 
@@ -198,13 +198,13 @@ fn test_pack_lengths() {
     // the largest incompressible stream we can represent in that space has
     // length 16*0xffff-4, with the 4 trailing bytes 00 04 00 b1 encoding the
     // trailing 4 bytes of 0x00 padding.
-    let len = 16*0xffff - 4;
+    let len = 16 * 0xffff - 4;
     let exe = make_incompressible_exe(len, 0);
     maybe_save_exe("tests/maxlen_incompressible.exe", &exe).unwrap();
     let out = pack(&exe).unwrap();
     maybe_save_exe("tests/maxlen_incompressible.packed.exe", &out).unwrap();
     // 1 byte longer input is an error.
-    let exe = make_incompressible_exe(len+1, 0);
+    let exe = make_incompressible_exe(len + 1, 0);
     maybe_save_exe("tests/maxlen+1_incompressible.exe", &exe).unwrap();
     want_error!(pack(&exe));
 
@@ -213,17 +213,17 @@ fn test_pack_lengths() {
     // applies as earlier with respect to subtracting 32 for the stack pointer
     // and subtracting 4 for compression overhead.
     let num_relocs = (0xffff - exepack_size) / 2;
-    let len = 16*0xeffd - 4;
+    let len = 16 * 0xeffd - 4;
     let exe = make_incompressible_exe(len, num_relocs);
     maybe_save_exe("tests/maxlen_maxrelocs_incompressible.exe", &exe).unwrap();
     let out = pack(&exe).unwrap();
     maybe_save_exe("tests/maxlen_maxrelocs_incompressible.packed.exe", &out).unwrap();
     // 1 byte longer is an error.
-    let exe = make_incompressible_exe(len+1, num_relocs);
+    let exe = make_incompressible_exe(len + 1, num_relocs);
     maybe_save_exe("tests/maxlen+1_maxrelocs_incompressible.exe", &exe).unwrap();
     want_error!(pack(&exe));
     // 1 more relocation is an error.
-    let exe = make_incompressible_exe(len, num_relocs+1);
+    let exe = make_incompressible_exe(len, num_relocs + 1);
     maybe_save_exe("tests/maxlen_maxrelocs+1_incompressible.exe", &exe).unwrap();
     want_error!(pack(&exe));
 }

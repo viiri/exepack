@@ -41,7 +41,7 @@ fn read_exe(buf: &[u8]) -> Result<exepack::EXE, exepack::Error> {
 
 fn store_u16le(buf: &mut [u8], i: usize, v: u16) {
     buf[i] = v as u8;
-    buf[i+1] = (v >> 8) as u8;
+    buf[i + 1] = (v >> 8) as u8;
 }
 
 #[test]
@@ -132,7 +132,7 @@ fn test_read_exe_len() {
         store_u16le(&mut sample, 4, e_cp as u16);
         maybe_save_exe(format!("tests/exe_len_{}.exe", len), &sample).unwrap();
         let exe = read_exe(&sample).unwrap();
-        assert_eq!(exe.body.len(), len-64);
+        assert_eq!(exe.body.len(), len - 64);
     }
 }
 

@@ -370,11 +370,7 @@ fn write_exe_header<W: Write>(w: &mut W, header: &EXEHeader) -> io::Result<usize
 /// use to emit a warning when it exceeds the length stated in the EXE header.
 /// Panics if the EXE length is less than the header length (which cannot happen
 /// if the header was returned from `read_and_check_exe_header`).
-fn trim_input_from_header<R: Read>(
-    input: R,
-    header: &EXEHeader,
-    file_len_hint: Option<u64>
-) -> io::Take<R> {
+fn trim_input_from_header<R: Read>(input: R, header: &EXEHeader, file_len_hint: Option<u64>) -> io::Take<R> {
     if let Some(file_len) = file_len_hint {
         // The EXE file length is allowed to be smaller than the length of the
         // file containing it. Emit a warning that we are ignoring trailing
@@ -437,9 +433,9 @@ fn test_encode_exe_len() {
     assert_eq!(encode_exe_len(511), Some((511, 1)));
     assert_eq!(encode_exe_len(512), Some((0, 1)));
     assert_eq!(encode_exe_len(513), Some((1, 2)));
-    assert_eq!(encode_exe_len(512*0xffff-1), Some((511, 0xffff)));
-    assert_eq!(encode_exe_len(512*0xffff), Some((0, 0xffff)));
-    assert_eq!(encode_exe_len(512*0xffff+1), None);
+    assert_eq!(encode_exe_len(512 * 0xffff - 1), Some((511, 0xffff)));
+    assert_eq!(encode_exe_len(512 * 0xffff), Some((0, 0xffff)));
+    assert_eq!(encode_exe_len(512 * 0xffff + 1), None);
 }
 
 #[derive(Debug, PartialEq)]
@@ -612,12 +608,12 @@ pub fn compress(output: &mut Vec<u8>, input: &[u8]) {
     // The tables are 1 element longer than the input. The zeroth entry in each
     // represents the "-1" index; i.e., the cost/length of compressing a
     // zero-length input using each of the strategies.
-    C.push(Entry{cost: 3, len: 0}); // 00 00 b1
-    F.push(Entry{cost: 4, len: 0}); // XX 00 00 b3
+    C.push(Entry { cost: 3, len: 0 }); // 00 00 b1
+    F.push(Entry { cost: 4, len: 0 }); // XX 00 00 b3
     // if we've done the whole input in the R state, we'll need to append a
     // 00 00 b1 (just as in the C case), solely for the sake of giving the
     // decompression routine a termination indicator.
-    R.push(3);                      // 00 00 b1
+    R.push(3);                         // 00 00 b1
 
     for j in (0..input.len()).rev() {
         // j indexes input backwards from input.len()-1 to 0; i indexes the
@@ -628,16 +624,16 @@ pub fn compress(output: &mut Vec<u8>, input: &[u8]) {
         let entry = cmp::min(
             // If we previous byte was in an F, then it costs 4 bytes to start a
             // C at this point.
-            Entry{cost: 4 + F[i-1].cost, len: 1},
+            Entry { cost: 4 + F[i - 1].cost, len: 1 },
             // If we were already in a C command, we have the option of
             // appending the current byte into the same command for an
             // additional cost of 1--but only if its len does not exceed
             // MAX_LEN. If it does, then we have to start a new C command at a
             // cost of 4.
-            if C[i-1].len < MAX_LEN {
-                Entry{cost: 1 + C[i-1].cost, len: 1 + C[i-1].len}
+            if C[i - 1].len < MAX_LEN {
+                Entry { cost: 1 + C[i - 1].cost, len: 1 + C[i - 1].len }
             } else {
-                Entry{cost: 4 + C[i-1].cost, len: 1}
+                Entry { cost: 4 + C[i - 1].cost, len: 1 }
             }
         );
         // Push the minimum value to C[i].
@@ -648,17 +644,17 @@ pub fn compress(output: &mut Vec<u8>, input: &[u8]) {
         let entry = cmp::min(
             // If we previous byte was in a C, then it costs 4 bytes to start an
             // F at this point.
-            Entry{cost: 4 + C[i-1].cost, len: 1},
+            Entry { cost: 4 + C[i - 1].cost, len: 1 },
             // If we were already in a F command, we have the option of
             // including the current byte in the same command for an additional
             // cost of 0--but only if its len does not exceed MAX_LEN *and* the
             // byte value is identical to the previous one (or we are at the
             // first byte and there is no previous one yet). Otherwise, we need
             // to start a new F command at a cost of 4.
-            if F[i-1].len < MAX_LEN && (j == input.len()-1 || input[j] == input[j+1]) {
-                Entry{cost: 0 + F[i-1].cost, len: 1 + F[i-1].len}
+            if F[i - 1].len < MAX_LEN && (j == input.len() - 1 || input[j] == input[j + 1]) {
+                Entry { cost: 0 + F[i - 1].cost, len: 1 + F[i - 1].len }
             } else {
-                Entry{cost: 4 + F[i-1].cost, len: 1}
+                Entry { cost: 4 + F[i - 1].cost, len: 1 }
             }
         );
         // Push the minimum value to F[i].
@@ -668,7 +664,7 @@ pub fn compress(output: &mut Vec<u8>, input: &[u8]) {
         // greater than the minimum cost so far using any of C, F, or R (the
         // cost of the verbatim byte itself). Note that we can switch from from
         // C or F to R, but once in R there is no going back to C or F.
-        let cost = C[i-1].cost.min(F[i-1].cost).min(R[i-1]) + 1;
+        let cost = C[i - 1].cost.min(F[i - 1].cost).min(R[i - 1]) + 1;
         // Push the minimum cost to R[i].
         R.push(cost);
     }
@@ -713,7 +709,7 @@ pub fn compress(output: &mut Vec<u8>, input: &[u8]) {
         match cmd {
             Cmd::C => {
                 let len = C[i].len as usize;
-                output.extend(input[j..j+len].iter());
+                output.extend(input[j..(j + len)].iter());
                 output.push(len as u8);
                 output.push((len >> 8) as u8);
                 output.push(0xb2 | is_final);
@@ -867,7 +863,7 @@ pub fn pack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE, E
             let e_ss = (stack_pointer - e_sp) >> 4;
             (
                 checked_u16(e_ss).ok_or(Error::EXE(EXEFormatError::SSTooLarge(e_ss)))?,
-                e_sp as u16
+                e_sp as u16,
             )
         }
     };
@@ -876,7 +872,7 @@ pub fn pack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE, E
         e_maxalloc: exe.e_maxalloc,
         e_ss: e_ss,
         e_sp: e_sp,
-        e_ip: 18,   // Stub begins just after the EXEPACK header.
+        e_ip: 18, // Stub begins just after the EXEPACK header.
         e_cs: e_cs,
         e_ovno: exe.e_ovno,
         body,
@@ -889,10 +885,10 @@ pub fn pack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE, E
 pub fn unpad(buf: &[u8], mut i: usize) -> usize {
     for _ in 0..15 {
         if i == 0 {
-            break
+            break;
         }
-        if buf[i-1] != 0xff {
-            break
+        if buf[i - 1] != 0xff {
+            break;
         }
         i -= 1;
     }
@@ -911,7 +907,7 @@ pub fn decompress(buf: &mut [u8], mut dst: usize, mut src: usize) -> Result<(), 
             // The byte we're about to read--or one of the bytes farther down
             // the line--was overwritten. This is allowed to happen on the first
             // iteration, before we've written anything.
-            return Err(EXEPACKFormatError::Crossover(dst, src))
+            return Err(EXEPACKFormatError::Crossover(dst, src));
         }
         // Read the command byte.
         src = src.checked_sub(1).ok_or(EXEPACKFormatError::SrcOverflow())?;
@@ -929,7 +925,7 @@ pub fn decompress(buf: &mut [u8], mut dst: usize, mut src: usize) -> Result<(), 
                 // debug!("0x{:02x} fill {} 0x{:02x}", command, length, fill);
                 dst = dst.checked_sub(length).ok_or(EXEPACKFormatError::FillOverflow(dst, src, command, length, fill))?;
                 for i in 0..length {
-                    buf[dst+i] = fill;
+                    buf[dst + i] = fill;
                 }
             }
             0xb2 => {
@@ -937,7 +933,7 @@ pub fn decompress(buf: &mut [u8], mut dst: usize, mut src: usize) -> Result<(), 
                 src = src.checked_sub(length).ok_or(EXEPACKFormatError::SrcOverflow())?;
                 dst = dst.checked_sub(length).ok_or(EXEPACKFormatError::CopyOverflow(dst, src, command, length))?;
                 for i in 0..length {
-                    buf[dst+length-i-1] = buf[src+length-i-1];
+                    buf[dst + length - i - 1] = buf[src + length - i - 1];
                 }
             }
             _ => {
@@ -945,7 +941,7 @@ pub fn decompress(buf: &mut [u8], mut dst: usize, mut src: usize) -> Result<(), 
             }
         }
         if command & 0x01 != 0 {
-            break
+            break;
         }
     }
     if original_src < dst {
@@ -1040,7 +1036,7 @@ fn read_stub<R: Read>(r: &mut R) -> io::Result<(Vec<u8>, bool)> {
         if buf.ends_with(SUFFIX) {
             {
                 let len = buf.len();
-                buf.resize(len+22, 0);
+                buf.resize(len + 22, 0);
                 r.read_exact(&mut buf[len..])?;
                 return Ok((buf, true));
             }

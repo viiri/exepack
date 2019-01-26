@@ -118,7 +118,7 @@ fn stub_resembles_exepack(stub: &[u8]) -> bool {
         if i + EXEPACK_ERRMSG.len() > stub.len() {
             break;
         }
-        if &stub[i..i+EXEPACK_ERRMSG.len()] == EXEPACK_ERRMSG {
+        if &stub[i..(i + EXEPACK_ERRMSG.len())] == EXEPACK_ERRMSG {
             return true;
         }
     }
@@ -197,7 +197,8 @@ fn print_usage<W: Write>(w: &mut W, opts: getopts::Options) -> io::Result<()> {
     let brief = format!("\
 Usage: {} [OPTION]... INPUT.EXE OUTPUT.EXE\n\
 Compress or decompress a DOS EXE executable with EXEPACK.",
-        env::args().next().unwrap());
+        env::args().next().unwrap()
+    );
     write!(w, "{}", opts.usage(&brief))
 }
 

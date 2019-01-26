@@ -9,11 +9,11 @@ use std::str;
 
 fn store_u16le(buf: &mut [u8], i: usize, v: u16) {
     buf[i] = v as u8;
-    buf[i+1] = (v >> 8) as u8;
+    buf[i + 1] = (v >> 8) as u8;
 }
 
 fn fetch_u16le(buf: &[u8], i: usize) -> u16 {
-    buf[i] as u16 | ((buf[i+1] as u16) << 8)
+    buf[i] as u16 | ((buf[i + 1] as u16) << 8)
 }
 
 fn unpacked_sample() -> exepack::EXE {
@@ -91,7 +91,7 @@ fn test_unpack_unknown_stub() {
     let mut sample = packed_sample();
     // tweak a byte at the end of the stub
     let message = sample.e_cs as usize * 16 + sample.e_ip as usize + exepack::STUB.len() - 22;
-    sample.body[message-5] ^= 0xff;
+    sample.body[message - 5] ^= 0xff;
     maybe_save_exe("tests/exepack_unknown_stub.exe", &sample).unwrap();
     match unpack(&sample) {
         Err(exepack::Error::EXEPACK(exepack::EXEPACKFormatError::UnknownStub(_, _))) => (),
@@ -104,7 +104,7 @@ fn test_unpack_unknown_stub() {
 #[test]
 fn test_unpack_relocations() {
     let mut sample = packed_sample();
-    sample.relocs.push(exepack::Pointer{ segment: 0x0012, offset: 0x3400 });
+    sample.relocs.push(exepack::Pointer { segment: 0x0012, offset: 0x3400 });
     maybe_save_exe("tests/exepack_with_relocs.exe", &sample).unwrap();
     match unpack(&sample) {
         Err(exepack::Error::EXE(exepack::EXEFormatError::RelocationsNotSupported(1, 28))) => (),
@@ -174,13 +174,13 @@ fn check_exes_equivalent(a: &exepack::EXE, b: &exepack::EXE) {
 fn test_unpack_altered_message() {
     let original = unpacked_sample();
     for message in &[
-        b"Fichero corrompido    ",   // as in stub_283_es
+        b"Fichero corrompido    ", // as in stub_283_es
         b"XXXXXXXXXXXXXXXXXXXXXX",
     ] {
         let mut sample = packed_sample();
         let start = sample.e_cs as usize * 16 + sample.e_ip as usize + exepack::STUB.len() - 22;
         {
-            let message_buf = &mut sample.body[start..start+message.len()];
+            let message_buf = &mut sample.body[start..start + message.len()];
             message_buf.copy_from_slice(&message[..]);
         }
         maybe_save_exe(format!("tests/exepack_message_{}.exe", str::replace(str::from_utf8(&message[..]).unwrap(), " ", "_")), &sample).unwrap();
@@ -224,7 +224,7 @@ fn test_unpack_skip_len() {
         store_u16le(&mut sample.body, start + 12, dest_len + skip_len - 1);
         sample.e_cs += skip_len - 1;
         // insert skip padding
-        sample.body.splice(start..start, iter::repeat(0xaa).take(16*(skip_len - 1) as usize));
+        sample.body.splice(start..start, iter::repeat(0xaa).take(16 * (skip_len - 1) as usize));
         maybe_save_exe(format!("tests/exepack_skip_len_{}_good.exe", skip_len), &sample).unwrap();
         check_exes_equivalent(&original, &unpack(&sample).unwrap());
     }
