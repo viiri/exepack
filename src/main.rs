@@ -18,9 +18,8 @@
 //!
 //! # Exit status
 //!
-//! For errors that occur while parsing or decompressing the EXEPACK layer,
-//! exits with status 255. For other errors (I/O, EXE parsing), exits with
-//! status 1.
+//! Exit status is 0 if there was no error, or 1 if there was any kind of error
+//! (e.g., I/O, EXE parsing, EXEPACK decompression).
 
 extern crate exepack;
 extern crate getopts;
@@ -248,11 +247,6 @@ fn main() {
             }
             _ => eprintln!("{}", err),
         }
-        process::exit(match err.kind {
-            // EXEPACK returns 255 on a "Packed file is corrupt" error.
-            exepack::Error::EXEPACK(_) => 255,
-            // Other errors get exit status 1.
-            _ => 1,
-        });
+        process::exit(1);
     }
 }
