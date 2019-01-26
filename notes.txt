@@ -16,6 +16,7 @@ https://www.classicdosgames.com/compression/exepack.html
 
 Is truncating the input according to e_cblp and c_cp the right thing to do?
 Or should we rather just read to the file's natural EOF?
+Perhaps we could compress/decompress entire PE executables, even if they are not runnable under DOS.
 Currently we truncate with a warning.
 
 Should we be checking the EXE checksum, when nonzero?
