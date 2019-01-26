@@ -51,13 +51,20 @@ exepack -d packed.exe unpacked.exe
 .P
 This program only works with 16-bit DOS MZ executables.
 It does not work with other formats
-that happen to have a \(lq.exe\(rq filename extension,
+that happen to have a ".exe" filename extension,
 such as the PE (Portable Executable) format
 used for Windows executables,
 If you try to compress a PE file,
 you will only end up compressing the DOS stub
 (the short program that prints
-\(lqThis program cannot be run in DOS mode\(rq).
+"This program cannot be run in DOS mode").
+The program will print a warning like:
+.RS
+warning: EXE file size is 1168; ignoring
+.I
+NUM
+.R trailing bytes
+.RE
 .P
 There are several versions of the EXEPACK format,
 with slight differences.
@@ -72,12 +79,19 @@ EXEPACK 4.00, 4.03, 4.05, 4.06
 .IP \(bu
 LINK /EXEPACK 3.60, 3.64, 3.65, 3.69, 5.01.21
 .P
-When this program compresses, it tries to produce files
+In compress mode, this program tries to produce files
 that, in addition to being self-extracting,
 use the same file offsets as EXEPACK 4.05/4.06,
 which is the format documented at
 http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK#File_Format.
 This is to retain compatibility with other external decompressors.
+In decompress mode,
+if the input resembles EXEPACK
+(i.e., contains the string "Packed file is corrupt")
+but the precise format isn't recognized,
+it will display the EXEPACK header and executable stub,
+and ask you to email them to the author so
+that the format can be supported in the future.
 .SH SEE ALSO
 .P
 https://www.bamsoftware.com/software/exepack/
