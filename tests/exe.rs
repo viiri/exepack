@@ -1,12 +1,9 @@
 extern crate exepack;
 
+use std::env;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path;
-
-// If true, save EXE generated during the course of testing to the filesystem,
-// so you can examine/test them externally.
-const SAVE_EXES: bool = false;
 
 fn save_exe<P: AsRef<path::Path>>(path: P, contents: &[u8]) -> Result<(), exepack::Error> {
     let f = fs::File::create(path)?;
@@ -16,9 +13,9 @@ fn save_exe<P: AsRef<path::Path>>(path: P, contents: &[u8]) -> Result<(), exepac
     Ok(())
 }
 
-// call save_exe if SAVE_EXES is true
+// call save_exe if the environment variable EXEPACK_TEST_SAVE_EXE is set.
 fn maybe_save_exe<P: AsRef<path::Path>>(path: P, contents: &[u8]) -> Result<(), exepack::Error> {
-    if SAVE_EXES {
+    if let Some(_) = env::var_os("EXEPACK_TEST_SAVE_EXE") {
         save_exe(path, contents)?;
     }
     Ok(())

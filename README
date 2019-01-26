@@ -14,6 +14,12 @@ It's written in Rust; you need rustc and cargo. To build:
 The compiled program will be in target/release/exepack. There is
 documentation in the doc and man directories.
 
+To run the tests, do
+	cargo test
+The tests produce a bunch of valid and invalid EXE files; to save them
+for investigation, run
+	EXEPACK_TEST_SAVE_EXE=1 cargo test
+
 An EXEPACK-packed file consists of compressed data, some metadata, and
 an executable "stub" which, when run, decompresses the rest of the file
 and jumps to the entry point of the decompressed executable. When

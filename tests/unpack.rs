@@ -1,14 +1,11 @@
 extern crate exepack;
 
+use std::env;
 use std::fs;
 use std::io::{self, Seek, Write};
 use std::iter;
 use std::path;
 use std::str;
-
-// If true, save EXE generated during the course of testing to the filesystem,
-// so you can examine/test them externally.
-const SAVE_EXES: bool = false;
 
 fn store_u16le(buf: &mut [u8], i: usize, v: u16) {
     buf[i] = v as u8;
@@ -37,9 +34,9 @@ fn save_exe<P: AsRef<path::Path>>(path: P, exe: &exepack::EXE) -> Result<(), exe
     Ok(())
 }
 
-// call save_exe if SAVE_EXES is true
+// call save_exe if the environment variable EXEPACK_TEST_SAVE_EXE is set.
 fn maybe_save_exe<P: AsRef<path::Path>>(path: P, exe: &exepack::EXE) -> Result<(), exepack::Error> {
-    if SAVE_EXES {
+    if let Some(_) = env::var_os("EXEPACK_TEST_SAVE_EXE") {
         save_exe(path, exe)?;
     }
     Ok(())
