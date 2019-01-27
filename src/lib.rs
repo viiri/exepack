@@ -1149,10 +1149,16 @@ pub fn unpack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<EXE,
         .map_err(|err| annotate_io_error(err, "reading EXEPACK relocation table"))?;
     debug!("{:?}", relocs);
 
-    // It's not an error if there is trailing data here (i.e., if
-    // exepack_header.exepack_size is larger than it needs to be). Any trailing
-    // data would be ignored by the EXEPACK decompression stub if you were to
-    // run it.
+    // If there is any trailing data here, it means that exepack_size was too
+    // big compared to our reckoning of where the packed relocation table
+    // started; in other words it's possible that read_stub didn't find the
+    // end of the stub correctly. Report this as an UnknownStub error.
+    {
+        let mut b = [0; 1];
+        if let Ok(_) = input.read_exact(&mut b) {
+            return Err(Error::EXEPACK(EXEPACKFormatError::UnknownStub(exepack_header_buf, stub)));
+        }
+    }
 
     // Finally, construct a new EXE.
     Ok(EXE {

@@ -188,15 +188,25 @@ fn test_unpack_altered_message() {
     }
 }
 
-// it's okay for there to be garbage after the packed relocation table, it just
-// gets ignored
 #[test]
 fn test_unpack_trailing_garbage() {
+    // it's okay for there to be garbage if it's past exepack_size.
     let original = unpacked_sample();
     let mut sample = packed_sample();
-    sample.body.extend_from_slice(b"blahblahblahblahblahblah");
-    maybe_save_exe("tests/exepack_trailing_garbage.exe", &sample).unwrap();
+    sample.body.extend(iter::repeat(b'X').take(64));
+    maybe_save_exe("tests/exe_trailing_garbage.exe", &sample).unwrap();
     check_exes_equivalent(&original, &unpack(&sample).unwrap());
+
+    // but if it's inside exepack_size, it means the relocation table was not as
+    // long as we thought it should be, so we may have guessed the end of the
+    // decompression stub wrong.
+    let exepack_size = fetch_u16le(&sample.body, sample.e_cs as usize * 16 + 6);
+    store_u16le(&mut sample.body, sample.e_cs as usize * 16 + 6, exepack_size as u16 + 64);
+    maybe_save_exe("tests/exepack_trailing_garbage.exe", &sample).unwrap();
+    match unpack(&sample) {
+        Err(exepack::Error::EXEPACK(exepack::EXEPACKFormatError::UnknownStub(_, _))) => (),
+        x => panic!("{:?}", x),
+    }
 }
 
 #[test]
