@@ -508,7 +508,7 @@ pub fn compress(output: &mut Vec<u8>, input: &[u8]) {
     // could compress however we like. But we want to remain compatible with
     // https://github.com/w4kfu/unEXEPACK and other external EXEPACK unpackers,
     // so we use the standard EXEPACK encoding: 0xb2 for a copy, 0xb0 for a
-    // fill, MSb == 1 to mark the end.
+    // fill, LSb == 1 to mark the end.
     //
     // The algorithm here uses dynamic programming. We define 3 states that the
     // compressed stream may be in:
@@ -544,7 +544,7 @@ pub fn compress(output: &mut Vec<u8>, input: &[u8]) {
     //
     // The we walk backwards through the minimum-cost tables. At each index i we
     // choose whichever of C, F, and R has the lowest cost--with the restriction
-    // that once we have select C or F once, we can never again select R. Then
+    // that once we have selected C or F once, we can never again select R. Then
     // we jump i ahead by the length of the command, and repeat until we reach
     // the beginning of the tables. In the case where we stayed in R throughout
     // (i.e., an incompressible sequence), we tack on a dummy "copy 0" command
@@ -610,7 +610,7 @@ pub fn compress(output: &mut Vec<u8>, input: &[u8]) {
     // zero-length input using each of the strategies.
     C.push(Entry { cost: 3, len: 0 }); // 00 00 b1
     F.push(Entry { cost: 4, len: 0 }); // XX 00 00 b3
-    // if we've done the whole input in the R state, we'll need to append a
+    // If we've done the whole input in the R state, we'll need to append a
     // 00 00 b1 (just as in the C case), solely for the sake of giving the
     // decompression routine a termination indicator.
     R.push(3);                         // 00 00 b1
@@ -677,7 +677,7 @@ pub fn compress(output: &mut Vec<u8>, input: &[u8]) {
         F,
         R,
     }
-    // The command currently in effect. We encode forward, but the decompressor
+    // The command currently in effect. We encode forwards, but the decompressor
     // will run backwards. Start in the runout.
     let mut cmd = Cmd::R;
     // The first time we encode a C or F (i.e., when we get out of the runout),

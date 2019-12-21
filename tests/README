@@ -4,7 +4,7 @@ recreate it from source using NASM:
 $ nasm -O2 -fbin hello.asm
 
 This will create a binary file called hello. Run the following Python
-script to turn it into python.exe. If you make changes, you will have to
+script to turn it into hello.exe. If you make changes, you will have to
 change the relocs list to point to where the "numbers" label ended up.
 
 $ python mkexe.py < hello > hello.exe
