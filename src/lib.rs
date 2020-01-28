@@ -46,7 +46,7 @@ mod pointer;
 pub use pointer::Pointer;
 
 /// Our pre-assembled decompression stub.
-pub const STUB: &'static [u8; 283] = include!("stub.in");
+pub const STUB: &'static [u8; 283] = include_bytes!("stub.bin");
 
 /// If `DEBUG` is true, the library will print debugging information to stderr.
 pub static DEBUG: atomic::AtomicBool = atomic::AtomicBool::new(false);

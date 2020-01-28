@@ -1,17 +1,10 @@
-all: src/stub.in
+all: src/stub.bin
 	cargo build
 
 clean:
-	rm -f src/stub.in
+	rm -f src/stub.bin
 
-src/stub.in: src/stub.asm
-	( \
-		echo "// Automatically generated from $$(basename "$<")."; \
-		printf "b\""; \
-		nasm -O2 -fbin -o /dev/stdout "$<" \
-			| od -An -v -tu1 \
-			| xargs printf "\\\\x%02x"; \
-		printf "\"\\n"; \
-	) > "$@"
+src/stub.bin: src/stub.asm
+	nasm -O2 -fbin -o "$@" "$<"
 
 .PHONY: all
