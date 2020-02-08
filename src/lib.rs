@@ -82,15 +82,9 @@ fn checked_u16(n: usize) -> Option<u16> {
     }
 }
 
-/// Discard a certain number of bytes from an `io::Read`.
-fn discard<R: io::Read>(r: &mut R, mut n: u64) -> io::Result<()> {
-    let mut buf = [0; 256];
-    while n > 0 {
-        let len = cmp::min(n, buf.len() as u64);
-        r.read_exact(&mut buf[0..len as usize])?;
-        n = n.checked_sub(len as u64).unwrap();
-    }
-    Ok(())
+/// Reads and discards `n` bytes.
+fn discard<R: Read + ?Sized>(r: &mut R, n: u64) -> io::Result<()> {
+    io::copy(&mut r.take(n), &mut io::sink()).and(Ok(()))
 }
 
 /// Add a prefix to the message of an `io::Error`.
