@@ -924,11 +924,8 @@ pub fn decompress(buf: &mut [u8], mut dst: usize, mut src: usize) -> Result<(), 
         src = src.checked_sub(1).ok_or(ExepackFormatError::SrcOverflow())?;
         let command = buf[src];
         // Read the 16-bit length.
-        let mut length: usize = 0;
-        src = src.checked_sub(1).ok_or(ExepackFormatError::SrcOverflow())?;
-        length |= (buf[src] as usize) << 8;
-        src = src.checked_sub(1).ok_or(ExepackFormatError::SrcOverflow())?;
-        length |= buf[src] as usize;
+        src = src.checked_sub(2).ok_or(ExepackFormatError::SrcOverflow())?;
+        let length = u16::from_le_bytes(buf[src..src+2].try_into().unwrap()) as usize;
         match command & 0xfe {
             0xb0 => {
                 src = src.checked_sub(1).ok_or(ExepackFormatError::SrcOverflow())?;
