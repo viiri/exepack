@@ -134,6 +134,8 @@ pub enum ExepackFormatError {
     UncompressedTooLong(usize),
     RelocationAddrTooLarge(Pointer),
     ExepackTooLong(usize),
+    CompressedTooLong(usize),
+    SSTooLarge(usize),
 }
 
 impl fmt::Display for ExepackFormatError {
@@ -171,6 +173,10 @@ impl fmt::Display for ExepackFormatError {
                 write!(f, "relocation address {} is too large to represent in the EXEPACK table", pointer),
             &ExepackFormatError::ExepackTooLong(len) =>
                 write!(f, "EXEPACK area is too long at {} bytes", len),
+            &ExepackFormatError::CompressedTooLong(len) =>
+                write!(f, "compressed data of {} bytes is too large to represent", len),
+            &ExepackFormatError::SSTooLarge(ss) =>
+                write!(f, "stack segment 0x{:04x} is too large to represent", ss),
         }
     }
 }
@@ -509,7 +515,7 @@ pub fn pack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<exe::E
     // The code segment points at the EXEPACK header, immediately after the
     // compressed data.
     let e_cs = checked_u16(compressed.len() / 16)
-        .ok_or(exe::Error::Format(exe::FormatError::CompressedTooLong(compressed.len())))?;
+        .ok_or(ExepackFormatError::CompressedTooLong(compressed.len()))?;
     // When the decompression stub runs, it will copy itself to a location
     // higher in memory (past the end of the uncompressed data size) so that the
     // decompression process doesn't overwrite it while it is running. But we
@@ -538,7 +544,7 @@ pub fn pack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<exe::E
             let e_sp = 0xfff0 | (stack_pointer & 0xf);
             let e_ss = (stack_pointer - e_sp) >> 4;
             (
-                checked_u16(e_ss).ok_or(exe::Error::Format(exe::FormatError::SSTooLarge(e_ss)))?,
+                checked_u16(e_ss).ok_or(ExepackFormatError::SSTooLarge(e_ss))?,
                 e_sp as u16,
             )
         }

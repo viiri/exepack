@@ -47,8 +47,6 @@ pub enum FormatError {
     RelocationsOutsideHeader(u16, u16),
     TooManyRelocations(usize),
     TooLong(usize),
-    CompressedTooLong(usize),
-    SSTooLarge(usize),
 }
 
 impl fmt::Display for FormatError {
@@ -60,8 +58,6 @@ impl fmt::Display for FormatError {
             &FormatError::RelocationsOutsideHeader(e_crlc, e_lfarlc) => write!(f, "{} relocations starting at 0x{:04x} lie outside the EXE header", e_crlc, e_lfarlc),
             &FormatError::TooManyRelocations(n) => write!(f, "{} relocations are too many to fit in 16 bits", n),
             &FormatError::TooLong(len) => write!(f, "EXE size of {} is too large to represent", len),
-            &FormatError::CompressedTooLong(len) => write!(f, "compressed data of {} bytes is too large to represent", len),
-            &FormatError::SSTooLarge(ss) => write!(f, "stack segment 0x{:04x} is too large to represent", ss),
         }
     }
 }
