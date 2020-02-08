@@ -107,7 +107,7 @@ fn test_unpack_relocations() {
     sample.relocs.push(exepack::Pointer { segment: 0x0012, offset: 0x3400 });
     maybe_save_exe("tests/exepack_with_relocs.exe", &sample).unwrap();
     match unpack(&sample) {
-        Err(exepack::Error::Exe(exepack::ExeFormatError::RelocationsNotSupported(1, 28))) => (),
+        Err(exepack::Error::Exepack(exepack::ExepackFormatError::RelocationsNotSupported(1, 28))) => (),
         x => panic!("{:?}", x),
     }
 }

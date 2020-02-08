@@ -133,7 +133,7 @@ pub enum ExeFormatError {
     BadNumPages(u16, u16),
     HeaderTooShort(u16),
     RelocationsOutsideHeader(u16, u16),
-    RelocationsNotSupported(u16, u16),
+    TooManyRelocations(usize),
     TooLong(usize),
     CompressedTooLong(usize),
     SSTooLarge(usize),
@@ -146,7 +146,7 @@ impl fmt::Display for ExeFormatError {
             &ExeFormatError::BadNumPages(e_cb, e_cblp) => write!(f, "Bad EXE size ({}, {})", e_cb, e_cblp),
             &ExeFormatError::HeaderTooShort(e_cparhdr) => write!(f, "EXE header of {} bytes is too small", e_cparhdr as u64 * 16),
             &ExeFormatError::RelocationsOutsideHeader(e_crlc, e_lfarlc) => write!(f, "{} relocations starting at 0x{:04x} lie outside the EXE header", e_crlc, e_lfarlc),
-            &ExeFormatError::RelocationsNotSupported(_e_crlc, _e_lfarlc) => write!(f, "relocations before decompression are not supported"),
+            &ExeFormatError::TooManyRelocations(n) => write!(f, "{} relocations are too many to fit in 16 bits", n),
             &ExeFormatError::TooLong(len) => write!(f, "EXE size of {} is too large to represent", len),
             &ExeFormatError::CompressedTooLong(len) => write!(f, "compressed data of {} bytes is too large to represent", len),
             &ExeFormatError::SSTooLarge(ss) => write!(f, "stack segment 0x{:04x} is too large to represent", ss),
@@ -188,7 +188,7 @@ impl Exe {
         let (e_cblp, e_cp) = encode_exe_len(num_header_pages * 512 + self.body.len())
             .ok_or(Error::Exe(ExeFormatError::TooLong(num_header_pages * 512 + self.body.len())))?;
         let e_crlc = checked_u16(self.relocs.len())
-            .ok_or(Error::Exepack(ExepackFormatError::TooManyExeRelocations(self.relocs.len())))?;
+            .ok_or(Error::Exe(ExeFormatError::TooManyRelocations(self.relocs.len())))?;
         Ok(ExeHeader {
             e_magic: EXE_MAGIC,
             e_cblp: e_cblp,
@@ -437,7 +437,7 @@ pub enum ExepackFormatError {
     CopyOverflow(usize, usize, u8, usize),
     BogusCommand(usize, u8, usize),
     Gap(usize, usize),
-    TooManyExeRelocations(usize),
+    RelocationsNotSupported(u16, u16),
     UncompressedTooLong(usize),
     RelocationAddrTooLarge(Pointer),
     ExepackTooLong(usize),
@@ -472,8 +472,8 @@ impl fmt::Display for ExepackFormatError {
                 write!(f, "unknown command 0x{:02x} with ostensible length {} at index {}", command, length, src),
             &ExepackFormatError::Gap(dst, original_src) =>
                 write!(f, "decompression left a gap of {} unwritten bytes between write index {} and original read index {}", dst - original_src, dst, original_src),
-            &ExepackFormatError::TooManyExeRelocations(num_relocations) =>
-                write!(f, "too many relocation entries ({}) to represent in an EXE header", num_relocations),
+            &ExepackFormatError::RelocationsNotSupported(_e_crlc, _e_lfarlc) =>
+                write!(f, "relocations before decompression are not supported"),
             &ExepackFormatError::UncompressedTooLong(len) =>
                 write!(f, "uncompressed size {} is too large to represent in an EXEPACK header", len),
             &ExepackFormatError::RelocationAddrTooLarge(ref pointer) =>
@@ -1054,7 +1054,7 @@ pub fn unpack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<Exe,
     let (exe_header, relocs) = read_and_check_exe_header(input)?;
     debug!("{:?}", relocs);
     if relocs.len() > 0 {
-        return Err(Error::Exe(ExeFormatError::RelocationsNotSupported(exe_header.e_crlc, exe_header.e_lfarlc)));
+        return Err(Error::Exepack(ExepackFormatError::RelocationsNotSupported(exe_header.e_crlc, exe_header.e_lfarlc)));
     }
 
     // Now we are positioned just after the EXE header. Trim any data that lies
