@@ -33,6 +33,8 @@ use std::process;
 use std::str;
 use std::sync::atomic;
 
+use exepack::exe;
+
 struct TopLevelError {
     path: Option<PathBuf>,
     kind: exepack::Error,
@@ -47,7 +49,7 @@ impl fmt::Display for TopLevelError {
     }
 }
 
-fn write_exe_file<P: AsRef<Path>>(path: P, exe: &exepack::Exe) -> Result<u64, exepack::Error> {
+fn write_exe_file<P: AsRef<Path>>(path: P, exe: &exe::Exe) -> Result<u64, exepack::Error> {
     let f = File::create(&path)?;
     let mut f = io::BufWriter::new(f);
     let n = exe.write(&mut f)?;
@@ -55,7 +57,7 @@ fn write_exe_file<P: AsRef<Path>>(path: P, exe: &exepack::Exe) -> Result<u64, ex
     Ok(n)
 }
 
-fn pack_file<P: AsRef<Path>>(path: P) -> Result<exepack::Exe, exepack::Error> {
+fn pack_file<P: AsRef<Path>>(path: P) -> Result<exe::Exe, exepack::Error> {
     let f = File::open(&path)?;
     let file_len = f.metadata()?.len();
     let mut f = io::BufReader::new(f);
@@ -81,7 +83,7 @@ fn compress_mode<P: AsRef<Path>>(input_path: P, output_path: P) -> Result<(), To
     Ok(())
 }
 
-fn unpack_file<P: AsRef<Path>>(path: P) -> Result<exepack::Exe, exepack::Error> {
+fn unpack_file<P: AsRef<Path>>(path: P) -> Result<exe::Exe, exepack::Error> {
     let f = File::open(&path)?;
     let file_len = f.metadata()?.len();
     let mut f = io::BufReader::new(f);

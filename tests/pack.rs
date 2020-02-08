@@ -9,6 +9,8 @@ use std::io::{self, Seek, Write};
 use std::iter;
 use std::path;
 
+use exepack::exe;
+
 // generate a body of the given length, with repeating bytes so it is easily
 // compressible.
 fn compressible_body(len: usize) -> Vec<u8> {
@@ -23,8 +25,8 @@ fn incompressible_body(len: usize) -> Vec<u8> {
     [0x66, 0x90].iter().cloned().cycle().take(len).collect()
 }
 
-fn make_exe(body: Vec<u8>, relocs: Vec<exepack::Pointer>) -> exepack::Exe {
-    exepack::Exe {
+fn make_exe(body: Vec<u8>, relocs: Vec<exepack::Pointer>) -> exe::Exe {
+    exe::Exe {
         e_minalloc: 0xffff,
         e_maxalloc: 0xffff,
         e_ss: 0x0000,
@@ -44,15 +46,15 @@ fn make_relocs(n: usize) -> Vec<exepack::Pointer> {
     }).collect()
 }
 
-fn make_compressible_exe(body_len: usize, num_relocs: usize) -> exepack::Exe {
+fn make_compressible_exe(body_len: usize, num_relocs: usize) -> exe::Exe {
     make_exe(compressible_body(body_len), make_relocs(num_relocs))
 }
 
-fn make_incompressible_exe(body_len: usize, num_relocs: usize) -> exepack::Exe {
+fn make_incompressible_exe(body_len: usize, num_relocs: usize) -> exe::Exe {
     make_exe(incompressible_body(body_len), make_relocs(num_relocs))
 }
 
-fn save_exe<P: AsRef<path::Path>>(path: P, exe: &exepack::Exe) -> Result<(), exepack::Error> {
+fn save_exe<P: AsRef<path::Path>>(path: P, exe: &exe::Exe) -> Result<(), exepack::Error> {
     let f = fs::File::create(path)?;
     let mut w = io::BufWriter::new(f);
     exe.write(&mut w)?;
@@ -61,7 +63,7 @@ fn save_exe<P: AsRef<path::Path>>(path: P, exe: &exepack::Exe) -> Result<(), exe
 }
 
 // call save_exe if the environment variable EXEPACK_TEST_SAVE_EXE is set.
-fn maybe_save_exe<P: AsRef<path::Path>>(path: P, exe: &exepack::Exe) -> Result<(), exepack::Error> {
+fn maybe_save_exe<P: AsRef<path::Path>>(path: P, exe: &exe::Exe) -> Result<(), exepack::Error> {
     if let Some(_) = env::var_os("EXEPACK_TEST_SAVE_EXE") {
         save_exe(path, exe)?;
     }
@@ -70,7 +72,7 @@ fn maybe_save_exe<P: AsRef<path::Path>>(path: P, exe: &exepack::Exe) -> Result<(
 
 // a version of exepack::pack that works from a source EXE rather than an
 // io::Read, with no size hint.
-fn pack(source: &exepack::Exe) -> Result<exepack::Exe, exepack::Error> {
+fn pack(source: &exe::Exe) -> Result<exe::Exe, exepack::Error> {
     let mut f = io::Cursor::new(Vec::new());
     source.write(&mut f).unwrap();
     f.seek(io::SeekFrom::Start(0)).unwrap();
@@ -79,7 +81,7 @@ fn pack(source: &exepack::Exe) -> Result<exepack::Exe, exepack::Error> {
 
 // a version of exepack::unpack that works from a source EXE rather than an
 // io::Read, with no size hint.
-fn unpack(source: &exepack::Exe) -> Result<exepack::Exe, exepack::Error> {
+fn unpack(source: &exe::Exe) -> Result<exe::Exe, exepack::Error> {
     let mut f = io::Cursor::new(Vec::new());
     source.write(&mut f).unwrap();
     f.seek(io::SeekFrom::Start(0)).unwrap();
@@ -232,7 +234,7 @@ fn test_pack_lengths() {
 // roundtrip may change the size of the header, and may add padding to the end
 // of the body. The location of the relocation table may change. We don't check
 // the checksums.
-fn check_exes_equivalent(count: usize, a: &exepack::Exe, b: &exepack::Exe) {
+fn check_exes_equivalent(count: usize, a: &exe::Exe, b: &exe::Exe) {
     // Let a be the one with the shorter body.
     let (a, b) = if a.body.len() <= b.body.len() {
         (a, b)
@@ -267,7 +269,7 @@ fn check_exes_equivalent(count: usize, a: &exepack::Exe, b: &exepack::Exe) {
     assert_eq!(a_relocs, b_relocs, "{}", count);
 }
 
-fn pack_roundtrip_count(count: usize, max: usize, exe: exepack::Exe) -> exepack::Exe {
+fn pack_roundtrip_count(count: usize, max: usize, exe: exe::Exe) -> exe::Exe {
     if count + 1 > max {
         return exe;
     }
@@ -285,7 +287,7 @@ fn pack_roundtrip_count(count: usize, max: usize, exe: exepack::Exe) -> exepack:
 fn test_pack_roundtrip() {
     let exe = {
         let mut f = fs::File::open("tests/hello.exe").unwrap();
-        exepack::Exe::read(&mut f, None).unwrap()
+        exe::Exe::read(&mut f, None).unwrap()
     };
     pack_roundtrip_count(0, 9, exe);
 }

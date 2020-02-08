@@ -5,6 +5,8 @@ use std::fs;
 use std::io::{self, Read, Write};
 use std::path;
 
+use exepack::exe;
+
 fn save_exe<P: AsRef<path::Path>>(path: P, contents: &[u8]) -> Result<(), exepack::Error> {
     let f = fs::File::create(path)?;
     let mut w = io::BufWriter::new(f);
@@ -29,13 +31,13 @@ fn read_sample() -> Vec<u8> {
     contents
 }
 
-fn read_exe_with_hint(buf: &[u8], file_len_hint: Option<u64>) -> Result<exepack::Exe, exepack::Error> {
-    exepack::Exe::read(&mut io::Cursor::new(buf), file_len_hint)
+fn read_exe_with_hint(buf: &[u8], file_len_hint: Option<u64>) -> Result<exe::Exe, exe::Error> {
+    exe::Exe::read(&mut io::Cursor::new(buf), file_len_hint)
 }
 
 // a version of exepack::read_exe that works from a byte buffer rather than an
 // io::Read, with no size hint
-fn read_exe(buf: &[u8]) -> Result<exepack::Exe, exepack::Error> {
+fn read_exe(buf: &[u8]) -> Result<exe::Exe, exe::Error> {
     read_exe_with_hint(buf, None)
 }
 
@@ -51,7 +53,7 @@ fn test_read_exe_bad_magic() {
     sample[1] = b'Y';
     maybe_save_exe("tests/bad_exe_magic.exe", &sample).unwrap();
     match read_exe(&sample) {
-        Err(exepack::Error::Exe(exepack::ExeFormatError::BadMagic(0x5958))) => (),
+        Err(exe::Error::Format(exe::FormatError::BadMagic(0x5958))) => (),
         x => panic!("{:?}", x),
     }
 }
@@ -76,7 +78,7 @@ fn test_read_exe_eof() {
             let sample = &sample[..len];
             maybe_save_exe(format!("tests/truncate_{}.exe", len), sample).unwrap();
             match read_exe_with_hint(sample, file_len_hint) {
-                Err(exepack::Error::Io(ref err)) if err.kind() == io::ErrorKind::UnexpectedEof => (),
+                Err(exe::Error::Io(ref err)) if err.kind() == io::ErrorKind::UnexpectedEof => (),
                 x => panic!("{} {:?}", len, x),
             }
         }
@@ -99,7 +101,7 @@ fn test_read_exe_len() {
         store_u16le(&mut sample, 4, e_cp as u16);
         maybe_save_exe(format!("tests/e_cblp={}_e_cp={}.exe", e_cblp, e_cp), &sample).unwrap();
         match read_exe(&sample) {
-            Err(exepack::Error::Exe(exepack::ExeFormatError::BadNumPages(_, _))) => (),
+            Err(exe::Error::Format(exe::FormatError::BadNumPages(_, _))) => (),
             x => panic!("{:?}", x),
         }
     }
@@ -112,12 +114,12 @@ fn test_read_exe_len() {
         48, // EOF during header padding
     ] {
         let mut sample = sample.clone();
-        let (e_cblp, e_cp) = exepack::encode_exe_len(len).unwrap();
+        let (e_cblp, e_cp) = exe::encode_exe_len(len).unwrap();
         store_u16le(&mut sample, 2, e_cblp as u16);
         store_u16le(&mut sample, 4, e_cp as u16);
         maybe_save_exe(format!("tests/exe_len_{}.exe", len), &sample).unwrap();
         match read_exe(&sample) {
-            Err(exepack::Error::Exe(exepack::ExeFormatError::BadNumPages(_, _))) => (),
+            Err(exe::Error::Format(exe::FormatError::BadNumPages(_, _))) => (),
             x => panic!("{:?}", x),
         }
     }
@@ -127,7 +129,7 @@ fn test_read_exe_len() {
     {
         let mut sample = sample.clone();
         let len = 96;
-        let (e_cblp, e_cp) = exepack::encode_exe_len(len).unwrap();
+        let (e_cblp, e_cp) = exe::encode_exe_len(len).unwrap();
         store_u16le(&mut sample, 2, e_cblp as u16);
         store_u16le(&mut sample, 4, e_cp as u16);
         maybe_save_exe(format!("tests/exe_len_{}.exe", len), &sample).unwrap();
@@ -146,7 +148,7 @@ fn test_read_exe_overlaps() {
         store_u16le(&mut sample, 8, 1);
         maybe_save_exe("tests/cparhdr_short_header.exe", &sample).unwrap();
         match read_exe(&sample) {
-            Err(exepack::Error::Exe(exepack::ExeFormatError::HeaderTooShort(1))) => (),
+            Err(exe::Error::Format(exe::FormatError::HeaderTooShort(1))) => (),
             x => panic!("{:?}", x),
         }
     }
@@ -157,7 +159,7 @@ fn test_read_exe_overlaps() {
         store_u16le(&mut sample, 8, 2);
         maybe_save_exe("tests/cparhdr_short_relocs.exe", &sample).unwrap();
         match read_exe(&sample) {
-            Err(exepack::Error::Exe(exepack::ExeFormatError::RelocationsOutsideHeader(2, 28))) => (),
+            Err(exe::Error::Format(exe::FormatError::RelocationsOutsideHeader(2, 28))) => (),
             x => panic!("{:?}", x),
         }
     }
@@ -167,7 +169,7 @@ fn test_read_exe_overlaps() {
         store_u16le(&mut sample, 24, 128);
         maybe_save_exe("tests/cparhdr_relocs_outside_header.exe", &sample).unwrap();
         match read_exe(&sample) {
-            Err(exepack::Error::Exe(exepack::ExeFormatError::RelocationsOutsideHeader(2, 128))) => (),
+            Err(exe::Error::Format(exe::FormatError::RelocationsOutsideHeader(2, 128))) => (),
             x => panic!("{:?}", x),
         }
     }

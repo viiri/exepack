@@ -7,6 +7,8 @@ use std::iter;
 use std::path;
 use std::str;
 
+use exepack::exe;
+
 fn store_u16le(buf: &mut [u8], i: usize, v: u16) {
     buf[i] = v as u8;
     buf[i + 1] = (v >> 8) as u8;
@@ -16,17 +18,17 @@ fn fetch_u16le(buf: &[u8], i: usize) -> u16 {
     buf[i] as u16 | ((buf[i + 1] as u16) << 8)
 }
 
-fn unpacked_sample() -> exepack::Exe {
+fn unpacked_sample() -> exe::Exe {
     let mut f = fs::File::open("tests/hello.exe").unwrap();
-    exepack::Exe::read(&mut f, None).unwrap()
+    exe::Exe::read(&mut f, None).unwrap()
 }
 
-fn packed_sample() -> exepack::Exe {
+fn packed_sample() -> exe::Exe {
     let mut f = fs::File::open("tests/hello.exe").unwrap();
     exepack::pack(&mut f, None).unwrap()
 }
 
-fn save_exe<P: AsRef<path::Path>>(path: P, exe: &exepack::Exe) -> Result<(), exepack::Error> {
+fn save_exe<P: AsRef<path::Path>>(path: P, exe: &exe::Exe) -> Result<(), exepack::Error> {
     let f = fs::File::create(path)?;
     let mut w = io::BufWriter::new(f);
     exe.write(&mut w)?;
@@ -35,7 +37,7 @@ fn save_exe<P: AsRef<path::Path>>(path: P, exe: &exepack::Exe) -> Result<(), exe
 }
 
 // call save_exe if the environment variable EXEPACK_TEST_SAVE_EXE is set.
-fn maybe_save_exe<P: AsRef<path::Path>>(path: P, exe: &exepack::Exe) -> Result<(), exepack::Error> {
+fn maybe_save_exe<P: AsRef<path::Path>>(path: P, exe: &exe::Exe) -> Result<(), exepack::Error> {
     if let Some(_) = env::var_os("EXEPACK_TEST_SAVE_EXE") {
         save_exe(path, exe)?;
     }
@@ -44,7 +46,7 @@ fn maybe_save_exe<P: AsRef<path::Path>>(path: P, exe: &exepack::Exe) -> Result<(
 
 // a version of exepack::unpack that works from a source EXE rather than an
 // io::Read, with no size hint.
-fn unpack(source: &exepack::Exe) -> Result<exepack::Exe, exepack::Error> {
+fn unpack(source: &exe::Exe) -> Result<exe::Exe, exepack::Error> {
     let mut f = io::Cursor::new(Vec::new());
     source.write(&mut f).unwrap();
     f.seek(io::SeekFrom::Start(0)).unwrap();
@@ -134,7 +136,7 @@ fn test_unpack_short_exepack_size() {
 // roundtrip may change the size of the header, and may add padding to the end
 // of the body. The location of the relocation table may change. We don't check
 // the checksums.
-fn check_exes_equivalent(a: &exepack::Exe, b: &exepack::Exe) {
+fn check_exes_equivalent(a: &exe::Exe, b: &exe::Exe) {
     // Let a be the one with the shorter body.
     let (a, b) = if a.body.len() <= b.body.len() {
         (a, b)
