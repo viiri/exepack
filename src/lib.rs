@@ -542,14 +542,14 @@ pub fn compress(output: &mut Vec<u8>, input: &[u8]) {
     // current C block is full, we can't append to it and instead have to start
     // a new one.
     //
-    // The we walk backwards through the minimum-cost tables. At each index i we
-    // choose whichever of C, F, and R has the lowest cost--with the restriction
-    // that once we have selected C or F once, we can never again select R. Then
-    // we jump i ahead by the length of the command, and repeat until we reach
-    // the beginning of the tables. In the case where we stayed in R throughout
-    // (i.e., an incompressible sequence), we tack on a dummy "copy 0" command
-    // at the end--in this case (the worst case) the compressed data are 3 bytes
-    // larger than the uncompressed.
+    // Then we walk backwards through the minimum-cost tables. At each index i
+    // we choose whichever of C, F, and R has the lowest cost--with the
+    // restriction that once we have selected C or F once, we can never again
+    // select R. Then we jump i ahead by the length of the command, and repeat
+    // until we reach the beginning of the tables. In the case where we stayed
+    // in R throughout (i.e., an incompressible sequence), we tack on a dummy
+    // "copy 0" command at the end--in this case (the worst case) the compressed
+    // data are 3 bytes larger than the uncompressed.
     //
     // I'm not sure the algorithm used here is optimal with respect to the
     // length of commands. In the 1-dimensional C and F tables I'm storing the
