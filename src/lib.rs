@@ -38,6 +38,7 @@
 //!   decompression starts. This library doesn't permit such relocations.
 
 use std::cmp;
+use std::convert::TryInto;
 use std::fmt;
 use std::io::{self, Read, Write};
 
@@ -398,17 +399,15 @@ pub fn read_exe<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<Ex
     })
 }
 
-/// Return a tuple `(e_cblp, e_cp)` that encodes len as appropriate for the
-/// so-named EXE header fields. Returns None if the size is too large to be
+/// Returns a tuple `(e_cblp, e_cp)` that encodes `len` as appropriate for the
+/// so-named EXE header fields. Returns `None` if the `len` is too large to be
 /// represented (> 0x1fffe00).
 pub fn encode_exe_len(len: usize) -> Option<(u16, u16)> {
-    let e_cp = (len + 511) / 512;
-    if e_cp > 0xffff {
-        None
-    } else {
-        let e_cblp = len % 512;
-        Some((e_cblp as u16, e_cp as u16))
-    }
+    // Number of 512-byte blocks needed to store len, rounded up.
+    let e_cp: u16 = ((len + 511) / 512).try_into().ok()?;
+    // Number of bytes remaining after all the full blocks.
+    let e_cblp: u16 = (len % 512).try_into().ok()?;
+    Some((e_cblp, e_cp))
 }
 
 #[test]
