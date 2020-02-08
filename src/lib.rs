@@ -457,7 +457,6 @@ pub enum ExepackFormatError {
     SkipTooShort(u16),
     SkipTooLong(u16),
     ExepackTooShort(u16, usize),
-    Crossover(usize, usize),
     SrcOverflow(),
     FillOverflow(usize, usize, u8, usize, u8),
     CopyOverflow(usize, usize, u8, usize),
@@ -484,8 +483,6 @@ impl fmt::Display for ExepackFormatError {
                 write!(f, "EXEPACK skip_len of {} paragraphs is too long", skip_len),
             &ExepackFormatError::ExepackTooShort(exepack_size, header_and_stub_len) =>
                 write!(f, "EXEPACK size of {} bytes is too short for header and stub of {} bytes", exepack_size, header_and_stub_len),
-            &ExepackFormatError::Crossover(dst, src) =>
-                write!(f, "write index {} outpaced read index {}", dst, src),
             &ExepackFormatError::SrcOverflow() =>
                 write!(f, "reached end of compressed stream without seeing a termination command"),
             &ExepackFormatError::FillOverflow(dst, _src, _command, length, fill) =>
@@ -914,12 +911,6 @@ pub fn unpad(buf: &[u8], mut i: usize) -> usize {
 pub fn decompress(buf: &mut [u8], mut dst: usize, mut src: usize) -> Result<(), ExepackFormatError> {
     let original_src = src;
     loop {
-        if src < original_src && dst < src {
-            // The byte we're about to read--or one of the bytes farther down
-            // the line--was overwritten. This is allowed to happen on the first
-            // iteration, before we've written anything.
-            return Err(ExepackFormatError::Crossover(dst, src));
-        }
         // Read the command byte.
         src = src.checked_sub(1).ok_or(ExepackFormatError::SrcOverflow())?;
         let command = buf[src];

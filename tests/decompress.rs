@@ -7,9 +7,7 @@ const FILL: u8 = 0xb0;
 const FINAL: u8 = 0x01;
 
 fn mkvec<T: Copy>(s: &[T]) -> Vec<T> {
-    let mut v: Vec<T> = Vec::new();
-    v.extend(s.iter().map(|&x| x));
-    v
+    s.iter().cloned().collect()
 }
 
 #[test]
@@ -74,25 +72,15 @@ fn test_decompress_srcoverflow() {
 
 #[test]
 fn test_decompress_crossover() {
-    let inputs: &[(&[u8], usize)] = &[
-        (&[0x00, 0x00, COPY|FINAL, 0xaa, 0x07, 0x00, FILL], 9),
-        (&[0x00, 0x00, COPY|FINAL, 0xaa, 0x07, 0x00, FILL], 8),
-        (&[0x00, 0x00, COPY|FINAL, 0xaa, 0x07, 0x00, FILL], 7),
-        (&[0x00, 0x00, COPY|FINAL, 0xaa, 0x01, 0x00, COPY], 3),
-        (&[0x00, 0x00, COPY|FINAL, 0xaa, 0x01, 0x00, COPY], 2),
-        (&[0x00, 0x00, COPY|FINAL, 0xaa, 0x01, 0x00, COPY], 1),
-    ];
-    for &(input, dst) in inputs {
-        let src = input.len();
-        let mut work = mkvec(input);
-        if dst > src {
-            work.resize(dst, 0);
-        }
-        match decompress(&work, dst, src) {
-            Err(exepack::ExepackFormatError::Crossover(_, _)) => (),
-            x => panic!("{:?} {:?}", x, (input, dst)),
-        }
-    }
+    // dst overwrites src with something bogus
+    assert_eq!(decompress(&[0x00, 0x00, COPY|FINAL, 0xaa, 0x07, 0x00, FILL, 0xff, 0xff], 9, 7), Err(exepack::ExepackFormatError::BogusCommand(2, 0xaa, 0x0000)));
+    assert_eq!(decompress(&[0x00, 0x00, COPY|FINAL, 0xaa, 0x07, 0x00, FILL, 0xff], 8, 7), Err(exepack::ExepackFormatError::BogusCommand(2, 0xaa, 0xaa00)));
+    assert_eq!(decompress(&[0x00, 0x00, COPY|FINAL, 0xaa, 0x07, 0x00, FILL], 7, 7), Err(exepack::ExepackFormatError::BogusCommand(2, 0xaa, 0xaaaa)));
+    assert_eq!(decompress(&[0x00, 0x00, COPY|FINAL, 0xaa, 0x01, 0x00, COPY], 3, 7), Err(exepack::ExepackFormatError::BogusCommand(2, 0xaa, 0x0000)));
+
+    // dst overwrites src with a valid command
+    assert_eq!(decompress(&[0xaa, 0x01, 0x00, 0xff, COPY|FINAL, 0x01, 0x00, FILL], 4, 8), Ok(vec![0xaa, 0x01, 0xaa, COPY|FINAL]));
+    assert_eq!(decompress(&[0xff, 0xff, 0xff, 0xff, 0xff, 0xaa, 0x01, 0x00, COPY|FINAL, 0x04, 0x00, COPY], 5, 12), Ok(vec![0xaa, 0xaa, 0x01, 0x00, COPY|FINAL]));
 }
 
 #[test]
