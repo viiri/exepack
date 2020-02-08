@@ -1180,7 +1180,7 @@ pub fn write_exe<W: Write>(w: &mut W, exe: &EXE) -> Result<u64, Error> {
     debug!("{:?}", header);
     let mut n: u64 = 0;
     n += write_exe_header(w, &header)
-        .map_err(|err| {debug!("annotate"); annotate_io_error(err, "writing EXE header")})? as u64;
+        .map_err(|err| annotate_io_error(err, "writing EXE header"))? as u64;
     n += write_exe_relocations(w, &exe.relocs)
         .map_err(|err| annotate_io_error(err, "writing EXE relocations"))? as u64;
     assert!(n <= header.header_len());
