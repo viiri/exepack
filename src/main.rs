@@ -47,7 +47,7 @@ impl fmt::Display for TopLevelError {
     }
 }
 
-fn write_exe_file<P: AsRef<Path>>(path: P, exe: &exepack::EXE) -> Result<u64, exepack::Error> {
+fn write_exe_file<P: AsRef<Path>>(path: P, exe: &exepack::Exe) -> Result<u64, exepack::Error> {
     let f = File::create(&path)?;
     let mut f = io::BufWriter::new(f);
     let n = exepack::write_exe(&mut f, exe)?;
@@ -55,7 +55,7 @@ fn write_exe_file<P: AsRef<Path>>(path: P, exe: &exepack::EXE) -> Result<u64, ex
     Ok(n)
 }
 
-fn pack_file<P: AsRef<Path>>(path: P) -> Result<exepack::EXE, exepack::Error> {
+fn pack_file<P: AsRef<Path>>(path: P) -> Result<exepack::Exe, exepack::Error> {
     let f = File::open(&path)?;
     let file_len = f.metadata()?.len();
     let mut f = io::BufReader::new(f);
@@ -81,7 +81,7 @@ fn compress_mode<P: AsRef<Path>>(input_path: P, output_path: P) -> Result<(), To
     Ok(())
 }
 
-fn unpack_file<P: AsRef<Path>>(path: P) -> Result<exepack::EXE, exepack::Error> {
+fn unpack_file<P: AsRef<Path>>(path: P) -> Result<exepack::Exe, exepack::Error> {
     let f = File::open(&path)?;
     let file_len = f.metadata()?.len();
     let mut f = io::BufReader::new(f);
@@ -237,7 +237,7 @@ fn main() {
         compress_mode(&input_path, &output_path)
     } {
         match err.kind {
-            exepack::Error::EXEPACK(exepack::EXEPACKFormatError::UnknownStub(ref exepack_header_buffer, ref stub)) => {
+            exepack::Error::Exepack(exepack::ExepackFormatError::UnknownStub(ref exepack_header_buffer, ref stub)) => {
                 // UnknownStub gets special treatment. We search for "Packed
                 // file is corrupt" and display the stub if it is found, or warn
                 // that the input may not be EXEPACK if it is not.

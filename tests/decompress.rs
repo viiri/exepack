@@ -34,7 +34,7 @@ fn test_unpad() {
 
 // non-mutating version of exepack::decompress, return the trimmed, decompressed
 // output instead of modifying the input in place.
-fn decompress(buf: &[u8], dst: usize, src: usize) -> Result<Vec<u8>, exepack::EXEPACKFormatError> {
+fn decompress(buf: &[u8], dst: usize, src: usize) -> Result<Vec<u8>, exepack::ExepackFormatError> {
     let mut work = Vec::new();
     work.extend(buf.iter());
     match exepack::decompress(&mut work, dst, src) {
@@ -52,7 +52,7 @@ fn test_decompress_boguscommand() {
     ];
     for input in inputs {
         match decompress(input, input.len(), input.len()) {
-            Err(exepack::EXEPACKFormatError::BogusCommand(_, 0xaa, _)) => (),
+            Err(exepack::ExepackFormatError::BogusCommand(_, 0xaa, _)) => (),
             x => panic!("{:?} {:?}", x, input),
         }
     }
@@ -76,7 +76,7 @@ fn test_decompress_srcoverflow() {
         &[0xaa, 0xaa, 0x08, 0x00, COPY],
     ];
     for input in inputs {
-        assert_eq!(decompress(input, input.len(), input.len()), Err(exepack::EXEPACKFormatError::SrcOverflow()), "{:?}", input);
+        assert_eq!(decompress(input, input.len(), input.len()), Err(exepack::ExepackFormatError::SrcOverflow()), "{:?}", input);
     }
 }
 
@@ -97,7 +97,7 @@ fn test_decompress_crossover() {
             work.resize(dst, 0);
         }
         match decompress(&work, dst, src) {
-            Err(exepack::EXEPACKFormatError::Crossover(_, _)) => (),
+            Err(exepack::ExepackFormatError::Crossover(_, _)) => (),
             x => panic!("{:?} {:?}", x, (input, dst)),
         }
     }
@@ -116,7 +116,7 @@ fn test_decompress_filloverflow() {
             work.resize(dst, 0);
         }
         match decompress(&work, dst, src) {
-            Err(exepack::EXEPACKFormatError::FillOverflow(_, _, _, _, 0xaa)) => (),
+            Err(exepack::ExepackFormatError::FillOverflow(_, _, _, _, 0xaa)) => (),
             x => panic!("{:?} {:?}", x, (input, dst)),
         }
     }
@@ -135,7 +135,7 @@ fn test_decompress_copyoverflow() {
             work.resize(dst, 0);
         }
         match decompress(&work, dst, src) {
-            Err(exepack::EXEPACKFormatError::CopyOverflow(_, _, _, _)) => (),
+            Err(exepack::ExepackFormatError::CopyOverflow(_, _, _, _)) => (),
             x => panic!("{:?} {:?}", x, (input, dst)),
         }
     }
@@ -155,7 +155,7 @@ fn test_decompress_gap() {
             work.resize(dst, 0);
         }
         match decompress(&work, dst, src) {
-            Err(exepack::EXEPACKFormatError::Gap(_, _)) => (),
+            Err(exepack::ExepackFormatError::Gap(_, _)) => (),
             x => panic!("{:?} {:?}", x, (input, dst)),
         }
     }

@@ -23,8 +23,8 @@ fn incompressible_body(len: usize) -> Vec<u8> {
     [0x66, 0x90].iter().cloned().cycle().take(len).collect()
 }
 
-fn make_exe(body: Vec<u8>, relocs: Vec<exepack::Pointer>) -> exepack::EXE {
-    exepack::EXE {
+fn make_exe(body: Vec<u8>, relocs: Vec<exepack::Pointer>) -> exepack::Exe {
+    exepack::Exe {
         e_minalloc: 0xffff,
         e_maxalloc: 0xffff,
         e_ss: 0x0000,
@@ -44,15 +44,15 @@ fn make_relocs(n: usize) -> Vec<exepack::Pointer> {
     }).collect()
 }
 
-fn make_compressible_exe(body_len: usize, num_relocs: usize) -> exepack::EXE {
+fn make_compressible_exe(body_len: usize, num_relocs: usize) -> exepack::Exe {
     make_exe(compressible_body(body_len), make_relocs(num_relocs))
 }
 
-fn make_incompressible_exe(body_len: usize, num_relocs: usize) -> exepack::EXE {
+fn make_incompressible_exe(body_len: usize, num_relocs: usize) -> exepack::Exe {
     make_exe(incompressible_body(body_len), make_relocs(num_relocs))
 }
 
-fn save_exe<P: AsRef<path::Path>>(path: P, exe: &exepack::EXE) -> Result<(), exepack::Error> {
+fn save_exe<P: AsRef<path::Path>>(path: P, exe: &exepack::Exe) -> Result<(), exepack::Error> {
     let f = fs::File::create(path)?;
     let mut w = io::BufWriter::new(f);
     exepack::write_exe(&mut w, exe)?;
@@ -61,7 +61,7 @@ fn save_exe<P: AsRef<path::Path>>(path: P, exe: &exepack::EXE) -> Result<(), exe
 }
 
 // call save_exe if the environment variable EXEPACK_TEST_SAVE_EXE is set.
-fn maybe_save_exe<P: AsRef<path::Path>>(path: P, exe: &exepack::EXE) -> Result<(), exepack::Error> {
+fn maybe_save_exe<P: AsRef<path::Path>>(path: P, exe: &exepack::Exe) -> Result<(), exepack::Error> {
     if let Some(_) = env::var_os("EXEPACK_TEST_SAVE_EXE") {
         save_exe(path, exe)?;
     }
@@ -70,7 +70,7 @@ fn maybe_save_exe<P: AsRef<path::Path>>(path: P, exe: &exepack::EXE) -> Result<(
 
 // a version of exepack::pack that works from a source EXE rather than an
 // io::Read, with no size hint.
-fn pack(source: &exepack::EXE) -> Result<exepack::EXE, exepack::Error> {
+fn pack(source: &exepack::Exe) -> Result<exepack::Exe, exepack::Error> {
     let mut f = io::Cursor::new(Vec::new());
     exepack::write_exe(&mut f, source).unwrap();
     f.seek(io::SeekFrom::Start(0)).unwrap();
@@ -79,7 +79,7 @@ fn pack(source: &exepack::EXE) -> Result<exepack::EXE, exepack::Error> {
 
 // a version of exepack::unpack that works from a source EXE rather than an
 // io::Read, with no size hint.
-fn unpack(source: &exepack::EXE) -> Result<exepack::EXE, exepack::Error> {
+fn unpack(source: &exepack::Exe) -> Result<exepack::Exe, exepack::Error> {
     let mut f = io::Cursor::new(Vec::new());
     exepack::write_exe(&mut f, source).unwrap();
     f.seek(io::SeekFrom::Start(0)).unwrap();
@@ -113,7 +113,7 @@ fn test_pack_relocs() {
         exe.relocs.push(pointer);
         maybe_save_exe(format!("tests/reloc_{:04x}:{:04x}.exe", pointer.segment, pointer.offset), &exe).unwrap();
         match pack(&exe) {
-            Err(exepack::Error::EXEPACK(exepack::EXEPACKFormatError::RelocationAddrTooLarge(_))) => (),
+            Err(exepack::Error::Exepack(exepack::ExepackFormatError::RelocationAddrTooLarge(_))) => (),
             x => panic!("{:?} {}", x, pointer),
         }
     }
@@ -141,8 +141,8 @@ fn test_pack_lengths() {
     macro_rules! want_error {
         ($r:expr) => {
             match $r {
-                Err(exepack::Error::EXE(_)) => (),
-                Err(exepack::Error::EXEPACK(_)) => (),
+                Err(exepack::Error::Exe(_)) => (),
+                Err(exepack::Error::Exepack(_)) => (),
                 x => panic!("{:?}", x),
             }
         }
@@ -232,7 +232,7 @@ fn test_pack_lengths() {
 // roundtrip may change the size of the header, and may add padding to the end
 // of the body. The location of the relocation table may change. We don't check
 // the checksums.
-fn check_exes_equivalent(count: usize, a: &exepack::EXE, b: &exepack::EXE) {
+fn check_exes_equivalent(count: usize, a: &exepack::Exe, b: &exepack::Exe) {
     // Let a be the one with the shorter body.
     let (a, b) = if a.body.len() <= b.body.len() {
         (a, b)
@@ -267,7 +267,7 @@ fn check_exes_equivalent(count: usize, a: &exepack::EXE, b: &exepack::EXE) {
     assert_eq!(a_relocs, b_relocs, "{}", count);
 }
 
-fn pack_roundtrip_count(count: usize, max: usize, exe: exepack::EXE) -> exepack::EXE {
+fn pack_roundtrip_count(count: usize, max: usize, exe: exepack::Exe) -> exepack::Exe {
     if count + 1 > max {
         return exe;
     }
