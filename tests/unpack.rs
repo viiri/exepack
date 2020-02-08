@@ -18,7 +18,7 @@ fn fetch_u16le(buf: &[u8], i: usize) -> u16 {
 
 fn unpacked_sample() -> exepack::Exe {
     let mut f = fs::File::open("tests/hello.exe").unwrap();
-    exepack::read_exe(&mut f, None).unwrap()
+    exepack::Exe::read(&mut f, None).unwrap()
 }
 
 fn packed_sample() -> exepack::Exe {
@@ -29,7 +29,7 @@ fn packed_sample() -> exepack::Exe {
 fn save_exe<P: AsRef<path::Path>>(path: P, exe: &exepack::Exe) -> Result<(), exepack::Error> {
     let f = fs::File::create(path)?;
     let mut w = io::BufWriter::new(f);
-    exepack::write_exe(&mut w, exe)?;
+    exe.write(&mut w)?;
     w.flush()?;
     Ok(())
 }
@@ -46,7 +46,7 @@ fn maybe_save_exe<P: AsRef<path::Path>>(path: P, exe: &exepack::Exe) -> Result<(
 // io::Read, with no size hint.
 fn unpack(source: &exepack::Exe) -> Result<exepack::Exe, exepack::Error> {
     let mut f = io::Cursor::new(Vec::new());
-    exepack::write_exe(&mut f, source).unwrap();
+    source.write(&mut f).unwrap();
     f.seek(io::SeekFrom::Start(0)).unwrap();
     exepack::unpack(&mut f, None)
 }

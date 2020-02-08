@@ -56,13 +56,13 @@ fn round_up(n: usize, m: usize) -> Option<usize> {
     n.checked_add((m - n % m) % m)
 }
 
-fn read_u16le<R: Read>(r: &mut R) -> io::Result<u16> {
+fn read_u16le<R: Read + ?Sized>(r: &mut R) -> io::Result<u16> {
     let mut buf = [0; 2];
     r.read_exact(&mut buf)?;
     Ok((buf[0] as u16) | ((buf[1] as u16) << 8))
 }
 
-fn write_u16le<W: Write>(w: &mut W, v: u16) -> io::Result<usize> {
+fn write_u16le<W: Write + ?Sized>(w: &mut W, v: u16) -> io::Result<usize> {
     let buf: [u8; 2] = [
         (v & 0xff) as u8,
         ((v >> 8) & 0xff) as u8,
@@ -207,6 +207,60 @@ impl Exe {
             e_ovno: self.e_ovno,
         })
     }
+
+    /// Reads an EXE file into an `Exe` structure.
+    ///
+    /// `file_len_hint` is an optional externally provided hint of
+    /// the input file's total length, which we use to emit a warning when it
+    /// exceeds the length stated in the EXE header.
+    pub fn read<R: Read + ?Sized>(input: &mut R, file_len_hint: Option<u64>) -> Result<Self, Error> {
+        let (header, relocs) = read_and_check_exe_header(input)?;
+        debug!("{:?}", relocs);
+
+        // Now we are positioned just after the EXE header. Trim any data that lies
+        // beyond the length of the EXE file stated in the header.
+        let input = &mut trim_input_from_header(input, &header, file_len_hint);
+
+        // The trim_input_from_header above ensures that we will read no more than
+        // 0xffff*512 bytes < 32 MB here.
+        let mut body = vec![0; header.exe_len().checked_sub(header.header_len()).unwrap() as usize];
+        input.read_exact(&mut body)
+            .map_err(|err| annotate_io_error(err, "reading EXE body"))?;
+
+        Ok(Self {
+            e_minalloc: header.e_minalloc,
+            e_maxalloc: header.e_maxalloc,
+            e_ss: header.e_ss,
+            e_sp: header.e_sp,
+            e_ip: header.e_ip,
+            e_cs: header.e_cs,
+            e_ovno: header.e_ovno,
+            body,
+            relocs,
+        })
+    }
+
+    /// Serializes the `Exe` structure to `w`. Returns the number of bytes
+    /// written.
+    pub fn write<W: Write + ?Sized>(&self, w: &mut W) -> Result<u64, Error> {
+        let header = self.make_header()?;
+        debug!("{:?}", header);
+        let mut n: u64 = 0;
+        n += write_exe_header(w, &header)
+            .map_err(|err| annotate_io_error(err, "writing EXE header"))? as u64;
+        n += write_exe_relocations(w, &self.relocs)
+            .map_err(|err| annotate_io_error(err, "writing EXE relocations"))? as u64;
+        assert!(n <= header.header_len());
+        while n < header.header_len() {
+            let zeroes = [0; 16];
+            n += w.write(&zeroes[0..cmp::min((header.header_len() - n) as usize, zeroes.len())])
+                .map_err(|err| annotate_io_error(err, "writing EXE header padding"))? as u64;
+        }
+        w.write_all(&self.body)
+            .map_err(|err| annotate_io_error(err, "writing EXE body"))?;
+        n += self.body.len() as u64;
+        Ok(n)
+    }
 }
 
 /// A DOS EXE header. See <http://www.delorie.com/djgpp/doc/exe/>.
@@ -246,7 +300,7 @@ impl ExeHeader {
     }
 }
 
-fn read_exe_header<R: Read>(r: &mut R) -> io::Result<ExeHeader> {
+fn read_exe_header<R: Read + ?Sized>(r: &mut R) -> io::Result<ExeHeader> {
     Ok(ExeHeader {
         e_magic: read_u16le(r)?,
         e_cblp: read_u16le(r)?,
@@ -265,7 +319,7 @@ fn read_exe_header<R: Read>(r: &mut R) -> io::Result<ExeHeader> {
     })
 }
 
-fn read_exe_relocs<R: Read>(r: &mut R, num_relocs: usize) -> io::Result<Vec<Pointer>> {
+fn read_exe_relocs<R: Read + ?Sized>(r: &mut R, num_relocs: usize) -> io::Result<Vec<Pointer>> {
     let mut relocs = Vec::with_capacity(num_relocs);
     for _ in 0..num_relocs {
         relocs.push(Pointer {
@@ -279,7 +333,7 @@ fn read_exe_relocs<R: Read>(r: &mut R, num_relocs: usize) -> io::Result<Vec<Poin
 /// Read an EXE header (including relocations and padding) and do consistency
 /// checks on it. Reads exactly `header.header_len()` bytes from `r`. Doesn't
 /// support relocation entries stored outside the header.
-fn read_and_check_exe_header<R: Read>(r: &mut R) -> Result<(ExeHeader, Vec<Pointer>), Error> {
+fn read_and_check_exe_header<R: Read + ?Sized>(r: &mut R) -> Result<(ExeHeader, Vec<Pointer>), Error> {
     let header = read_exe_header(r)
         .map_err(|err| annotate_io_error(err, "reading EXE header"))?;
     debug!("{:?}", header);
@@ -329,7 +383,7 @@ fn read_and_check_exe_header<R: Read>(r: &mut R) -> Result<(ExeHeader, Vec<Point
     Ok((header, relocs))
 }
 
-fn write_exe_header<W: Write>(w: &mut W, header: &ExeHeader) -> io::Result<usize> {
+fn write_exe_header<W: Write + ?Sized>(w: &mut W, header: &ExeHeader) -> io::Result<usize> {
     let mut n = 0;
     n += write_u16le(w, header.e_magic)?;
     n += write_u16le(w, header.e_cblp)?;
@@ -366,37 +420,6 @@ fn trim_input_from_header<R: Read>(input: R, header: &ExeHeader, file_len_hint: 
         }
     }
     input.take(header.exe_len().checked_sub(header.header_len()).unwrap())
-}
-
-/// Read an EXE file.
-/// `file_len_hint` is an optional externally provided hint of
-/// the input file's total length, which we use to emit a warning when it
-/// exceeds the length stated in the EXE header.
-pub fn read_exe<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<Exe, Error> {
-    let (header, relocs) = read_and_check_exe_header(input)?;
-    debug!("{:?}", relocs);
-
-    // Now we are positioned just after the EXE header. Trim any data that lies
-    // beyond the length of the EXE file stated in the header.
-    let input = &mut trim_input_from_header(input, &header, file_len_hint);
-
-    // The trim_input_from_header above ensures that we will read no more than
-    // 0xffff*512 bytes < 32 MB here.
-    let mut body = vec![0; header.exe_len().checked_sub(header.header_len()).unwrap() as usize];
-    input.read_exact(&mut body)
-        .map_err(|err| annotate_io_error(err, "reading EXE body"))?;
-
-    Ok(Exe {
-        e_minalloc: header.e_minalloc,
-        e_maxalloc: header.e_maxalloc,
-        e_ss: header.e_ss,
-        e_sp: header.e_sp,
-        e_ip: header.e_ip,
-        e_cs: header.e_cs,
-        e_ovno: header.e_ovno,
-        body,
-        relocs,
-    })
 }
 
 /// Returns a tuple `(e_cblp, e_cp)` that encodes `len` as appropriate for the
@@ -759,7 +782,7 @@ fn encode_relocs(buf: &mut Vec<u8>, relocs: &[Pointer]) -> Result<(), Error> {
 /// total length, which we use to emit a warning when it exceeds the length
 /// stated in the EXE header.
 pub fn pack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<Exe, Error> {
-    let exe = read_exe(input, file_len_hint)?;
+    let exe = Exe::read(input, file_len_hint)?;
 
     let mut uncompressed = exe.body;
     // Pad uncompressed to a multiple of 16 bytes.
@@ -1158,32 +1181,11 @@ pub fn unpack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<Exe,
     })
 }
 
-fn write_exe_relocations<W: Write>(w: &mut W, relocs: &[Pointer]) -> io::Result<usize> {
+fn write_exe_relocations<W: Write + ?Sized>(w: &mut W, relocs: &[Pointer]) -> io::Result<usize> {
     let mut n = 0;
     for pointer in relocs.iter() {
         n += write_u16le(w, pointer.offset)?;
         n += write_u16le(w, pointer.segment)?;
     }
-    Ok(n)
-}
-
-/// Serialize an `Exe` structure to `w`.
-pub fn write_exe<W: Write>(w: &mut W, exe: &Exe) -> Result<u64, Error> {
-    let header = exe.make_header()?;
-    debug!("{:?}", header);
-    let mut n: u64 = 0;
-    n += write_exe_header(w, &header)
-        .map_err(|err| annotate_io_error(err, "writing EXE header"))? as u64;
-    n += write_exe_relocations(w, &exe.relocs)
-        .map_err(|err| annotate_io_error(err, "writing EXE relocations"))? as u64;
-    assert!(n <= header.header_len());
-    while n < header.header_len() {
-        let zeroes = [0; 16];
-        n += w.write(&zeroes[0..cmp::min((header.header_len() - n) as usize, zeroes.len())])
-            .map_err(|err| annotate_io_error(err, "writing EXE header padding"))? as u64;
-    }
-    w.write_all(&exe.body)
-        .map_err(|err| annotate_io_error(err, "writing EXE body"))?;
-    n += exe.body.len() as u64;
     Ok(n)
 }

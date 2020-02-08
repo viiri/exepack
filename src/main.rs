@@ -50,7 +50,7 @@ impl fmt::Display for TopLevelError {
 fn write_exe_file<P: AsRef<Path>>(path: P, exe: &exepack::Exe) -> Result<u64, exepack::Error> {
     let f = File::create(&path)?;
     let mut f = io::BufWriter::new(f);
-    let n = exepack::write_exe(&mut f, exe)?;
+    let n = exe.write(&mut f)?;
     f.flush()?;
     Ok(n)
 }
