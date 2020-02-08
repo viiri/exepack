@@ -945,7 +945,7 @@ pub fn decompress(buf: &mut [u8], mut dst: usize, mut src: usize) -> Result<(), 
                 }
             }
             _ => {
-                return Err(ExepackFormatError::BogusCommand(src, command, length));
+                return Err(ExepackFormatError::BogusCommand(src+2, command, length));
             }
         }
         if command & 0x01 != 0 {

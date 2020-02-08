@@ -45,17 +45,9 @@ fn decompress(buf: &[u8], dst: usize, src: usize) -> Result<Vec<u8>, exepack::Ex
 
 #[test]
 fn test_decompress_boguscommand() {
-    let inputs: &[&[u8]] = &[
-        &[0x00, 0x00, 0xaa],
-        &[0x00, 0x00, 0xaa, 0xbb, 0x01, 0x00, COPY],
-        &[0x00, 0x00, 0xaa, 0xbb, 0x01, 0x00, FILL],
-    ];
-    for input in inputs {
-        match decompress(input, input.len(), input.len()) {
-            Err(exepack::ExepackFormatError::BogusCommand(_, 0xaa, _)) => (),
-            x => panic!("{:?} {:?}", x, input),
-        }
-    }
+    assert_eq!(decompress(&[0x00, 0x00, 0xaa], 3, 3), Err(exepack::ExepackFormatError::BogusCommand(2, 0xaa, 0)));
+    assert_eq!(decompress(&[0x34, 0x12, 0xaa, 0xbb, 0x01, 0x00, COPY], 7, 7), Err(exepack::ExepackFormatError::BogusCommand(2, 0xaa, 0x1234)));
+    assert_eq!(decompress(&[0x00, 0x34, 0x12, 0xaa, 0xbb, 0x01, 0x00, FILL], 8, 8), Err(exepack::ExepackFormatError::BogusCommand(3, 0xaa, 0x1234)));
 }
 
 #[test]
