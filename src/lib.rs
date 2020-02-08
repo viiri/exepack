@@ -40,24 +40,15 @@
 use std::cmp;
 use std::fmt;
 use std::io::{self, Read, Write};
-use std::sync::atomic;
 
+#[macro_use]
+mod debug;
+pub use debug::DEBUG;
 mod pointer;
 pub use pointer::Pointer;
 
 /// Our pre-assembled decompression stub.
 pub const STUB: &'static [u8; 283] = include_bytes!("stub.bin");
-
-/// If `DEBUG` is true, the library will print debugging information to stderr.
-pub static DEBUG: atomic::AtomicBool = atomic::AtomicBool::new(false);
-
-macro_rules! debug {
-    ($($x:tt)*) => {
-        if DEBUG.load(atomic::Ordering::Relaxed) {
-            eprintln!($($x)*);
-        }
-    }
-}
 
 /// Round `n` up to the next multiple of `m`.
 fn round_up(n: usize, m: usize) -> Option<usize> {
