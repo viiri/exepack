@@ -167,11 +167,8 @@ impl Exe {
 }
 
 fn write_u16le<W: Write + ?Sized>(w: &mut W, v: u16) -> io::Result<usize> {
-    let buf: [u8; 2] = [
-        (v & 0xff) as u8,
-        ((v >> 8) & 0xff) as u8,
-    ];
-    w.write_all(&buf[..]).and(Ok(2))
+    let buf = &u16::to_le_bytes(v);
+    w.write_all(&u16::to_le_bytes(v)).and(Ok(buf.len()))
 }
 
 fn write_exe_relocations<W: Write + ?Sized>(w: &mut W, relocs: &[Pointer]) -> io::Result<usize> {
