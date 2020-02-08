@@ -246,7 +246,7 @@ impl Exe {
         let header = self.make_header()?;
         debug!("{:?}", header);
         let mut n: u64 = 0;
-        n += write_exe_header(w, &header)
+        n += header.write(w)
             .map_err(|err| annotate_io_error(err, "writing EXE header"))? as u64;
         n += write_exe_relocations(w, &self.relocs)
             .map_err(|err| annotate_io_error(err, "writing EXE relocations"))? as u64;
@@ -298,25 +298,48 @@ impl ExeHeader {
     pub fn header_len(&self) -> u64 {
         self.e_cparhdr as u64 * 16
     }
-}
 
-fn read_exe_header<R: Read + ?Sized>(r: &mut R) -> io::Result<ExeHeader> {
-    Ok(ExeHeader {
-        e_magic: read_u16le(r)?,
-        e_cblp: read_u16le(r)?,
-        e_cp: read_u16le(r)?,
-        e_crlc: read_u16le(r)?,
-        e_cparhdr: read_u16le(r)?,
-        e_minalloc: read_u16le(r)?,
-        e_maxalloc: read_u16le(r)?,
-        e_ss: read_u16le(r)?,
-        e_sp: read_u16le(r)?,
-        e_csum: read_u16le(r)?,
-        e_ip: read_u16le(r)?,
-        e_cs: read_u16le(r)?,
-        e_lfarlc: read_u16le(r)?,
-        e_ovno: read_u16le(r)?,
-    })
+    /// Reads an EXE header (only the fixed-length fields, not the relocations
+    /// or padding) into an `ExeHeader` structure.
+    pub fn read<R: Read + ?Sized>(r: &mut R) -> io::Result<Self> {
+        Ok(Self {
+            e_magic: read_u16le(r)?,
+            e_cblp: read_u16le(r)?,
+            e_cp: read_u16le(r)?,
+            e_crlc: read_u16le(r)?,
+            e_cparhdr: read_u16le(r)?,
+            e_minalloc: read_u16le(r)?,
+            e_maxalloc: read_u16le(r)?,
+            e_ss: read_u16le(r)?,
+            e_sp: read_u16le(r)?,
+            e_csum: read_u16le(r)?,
+            e_ip: read_u16le(r)?,
+            e_cs: read_u16le(r)?,
+            e_lfarlc: read_u16le(r)?,
+            e_ovno: read_u16le(r)?,
+        })
+    }
+
+    /// Serializes the `ExeHeader` structure to `w`. Returns the number of bytes
+    /// written.
+    pub fn write<W: Write + ?Sized>(&self, w: &mut W) -> io::Result<usize> {
+        let mut n = 0;
+        n += write_u16le(w, self.e_magic)?;
+        n += write_u16le(w, self.e_cblp)?;
+        n += write_u16le(w, self.e_cp)?;
+        n += write_u16le(w, self.e_crlc)?;
+        n += write_u16le(w, self.e_cparhdr)?;
+        n += write_u16le(w, self.e_minalloc)?;
+        n += write_u16le(w, self.e_maxalloc)?;
+        n += write_u16le(w, self.e_ss)?;
+        n += write_u16le(w, self.e_sp)?;
+        n += write_u16le(w, self.e_csum)?;
+        n += write_u16le(w, self.e_ip)?;
+        n += write_u16le(w, self.e_cs)?;
+        n += write_u16le(w, self.e_lfarlc)?;
+        n += write_u16le(w, self.e_ovno)?;
+        Ok(n)
+    }
 }
 
 fn read_exe_relocs<R: Read + ?Sized>(r: &mut R, num_relocs: usize) -> io::Result<Vec<Pointer>> {
@@ -334,7 +357,7 @@ fn read_exe_relocs<R: Read + ?Sized>(r: &mut R, num_relocs: usize) -> io::Result
 /// checks on it. Reads exactly `header.header_len()` bytes from `r`. Doesn't
 /// support relocation entries stored outside the header.
 fn read_and_check_exe_header<R: Read + ?Sized>(r: &mut R) -> Result<(ExeHeader, Vec<Pointer>), Error> {
-    let header = read_exe_header(r)
+    let header = ExeHeader::read(r)
         .map_err(|err| annotate_io_error(err, "reading EXE header"))?;
     debug!("{:?}", header);
 
@@ -381,25 +404,6 @@ fn read_and_check_exe_header<R: Read + ?Sized>(r: &mut R) -> Result<(ExeHeader, 
     };
 
     Ok((header, relocs))
-}
-
-fn write_exe_header<W: Write + ?Sized>(w: &mut W, header: &ExeHeader) -> io::Result<usize> {
-    let mut n = 0;
-    n += write_u16le(w, header.e_magic)?;
-    n += write_u16le(w, header.e_cblp)?;
-    n += write_u16le(w, header.e_cp)?;
-    n += write_u16le(w, header.e_crlc)?;
-    n += write_u16le(w, header.e_cparhdr)?;
-    n += write_u16le(w, header.e_minalloc)?;
-    n += write_u16le(w, header.e_maxalloc)?;
-    n += write_u16le(w, header.e_ss)?;
-    n += write_u16le(w, header.e_sp)?;
-    n += write_u16le(w, header.e_csum)?;
-    n += write_u16le(w, header.e_ip)?;
-    n += write_u16le(w, header.e_cs)?;
-    n += write_u16le(w, header.e_lfarlc)?;
-    n += write_u16le(w, header.e_ovno)?;
-    Ok(n)
 }
 
 /// The EXE header contains a limit to the overall length of the EXE file in the
