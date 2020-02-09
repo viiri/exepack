@@ -16,7 +16,7 @@ def encode_exe_len(len):
     return (len % 512, (len + 511) // 512)
 
 body = sys.stdin.read()
-relocs = [0x00000043, 0x00000045]
+relocs = [0x44, 0x46] # overwrite the "numbers" array
 
 e_cparhdr = 4
 e_cblp, e_cp = encode_exe_len(16*e_cparhdr + len(body))
