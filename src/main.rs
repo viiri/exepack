@@ -21,7 +21,6 @@
 //! Exit status is 0 if there was no error, or 1 if there was any kind of error
 //! (e.g., I/O, EXE parsing, EXEPACK decompression).
 
-extern crate exepack;
 extern crate getopts;
 
 use std::env;
@@ -33,7 +32,11 @@ use std::process;
 use std::str;
 use std::sync::atomic;
 
-use exepack::exe;
+#[macro_use]
+mod debug;
+mod exe;
+mod exepack;
+mod pointer;
 
 struct TopLevelError {
     path: Option<PathBuf>,
@@ -224,7 +227,7 @@ fn main() {
     }
 
     if matches.opt_present("debug") {
-        exepack::DEBUG.store(true, atomic::Ordering::Relaxed);
+        debug::DEBUG.store(true, atomic::Ordering::Relaxed);
     }
 
     if matches.free.len() != 2 {

@@ -40,11 +40,7 @@ use std::convert::TryInto;
 use std::fmt;
 use std::io::{self, prelude::*};
 
-#[macro_use]
-mod debug;
-pub use debug::DEBUG;
-pub mod exe;
-mod pointer;
+use exe;
 
 /// Our pre-assembled decompression stub.
 pub const STUB: &'static [u8; 283] = include_bytes!("stub.bin");
