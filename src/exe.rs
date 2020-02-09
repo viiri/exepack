@@ -284,25 +284,12 @@ fn read_relocs<R: Read + ?Sized>(r: &mut R, num_relocs: usize) -> io::Result<Vec
 /// Returns a tuple `(e_cblp, e_cp)` that encodes `len` as appropriate for the
 /// so-named EXE header fields. Returns `None` if the `len` is too large to be
 /// represented (> 0x1fffe00).
-pub fn encode_exe_len(len: usize) -> Option<(u16, u16)> {
+fn encode_exe_len(len: usize) -> Option<(u16, u16)> {
     // Number of 512-byte blocks needed to store len, rounded up.
     let e_cp: u16 = ((len + 511) / 512).try_into().ok()?;
     // Number of bytes remaining after all the full blocks.
     let e_cblp: u16 = (len % 512).try_into().ok()?;
     Some((e_cblp, e_cp))
-}
-
-#[test]
-fn test_encode_exe_len() {
-    assert_eq!(encode_exe_len(0), Some((0, 0)));
-    assert_eq!(encode_exe_len(1), Some((1, 1)));
-    assert_eq!(encode_exe_len(511), Some((511, 1)));
-    assert_eq!(encode_exe_len(512), Some((0, 1)));
-    assert_eq!(encode_exe_len(513), Some((1, 2)));
-    assert_eq!(encode_exe_len(512 * 0xffff - 1), Some((511, 0xffff)));
-    assert_eq!(encode_exe_len(512 * 0xffff), Some((0, 0xffff)));
-
-    assert_eq!(encode_exe_len(512 * 0xffff + 1), None);
 }
 
 /// Converts a `(e_cblp, e_cp)` tuple into a single length value. Returns `None`
@@ -315,24 +302,6 @@ fn decode_exe_len(e_cblp: u16, e_cp: u16) -> Option<u64> {
         (1..=511, _) => Some((e_cp - 1) as u64 * 512 + e_cblp as u64),
         _ => None, // e_cblp > 511.
     }
-}
-
-#[test]
-fn test_decode_exe_len() {
-    assert_eq!(decode_exe_len(0, 0), Some(0));
-    assert_eq!(decode_exe_len(1, 1), Some(1));
-    assert_eq!(decode_exe_len(511, 1), Some(511));
-    assert_eq!(decode_exe_len(0, 1), Some(512));
-    assert_eq!(decode_exe_len(1, 2), Some(513));
-    assert_eq!(decode_exe_len(511, 0xffff), Some(0xffff*512-1));
-    assert_eq!(decode_exe_len(0, 0xffff), Some(0xffff*512));
-
-    // When e_cp == 0, e_cblp must be 0, otherwise it would encode a negative
-    // length.
-    assert_eq!(decode_exe_len(1, 0), None);
-    assert_eq!(decode_exe_len(511, 0), None);
-    // e_cblp must be <= 511.
-    assert_eq!(decode_exe_len(512, 1), None);
 }
 
 #[cfg(test)]
@@ -379,6 +348,37 @@ mod tests {
     fn store_u16le(buf: &mut [u8], i: usize, v: u16) {
         buf[i] = v as u8;
         buf[i + 1] = (v >> 8) as u8;
+    }
+
+    #[test]
+    fn test_encode_exe_len() {
+        assert_eq!(encode_exe_len(0), Some((0, 0)));
+        assert_eq!(encode_exe_len(1), Some((1, 1)));
+        assert_eq!(encode_exe_len(511), Some((511, 1)));
+        assert_eq!(encode_exe_len(512), Some((0, 1)));
+        assert_eq!(encode_exe_len(513), Some((1, 2)));
+        assert_eq!(encode_exe_len(512 * 0xffff - 1), Some((511, 0xffff)));
+        assert_eq!(encode_exe_len(512 * 0xffff), Some((0, 0xffff)));
+
+        assert_eq!(encode_exe_len(512 * 0xffff + 1), None);
+    }
+
+    #[test]
+    fn test_decode_exe_len() {
+        assert_eq!(decode_exe_len(0, 0), Some(0));
+        assert_eq!(decode_exe_len(1, 1), Some(1));
+        assert_eq!(decode_exe_len(511, 1), Some(511));
+        assert_eq!(decode_exe_len(0, 1), Some(512));
+        assert_eq!(decode_exe_len(1, 2), Some(513));
+        assert_eq!(decode_exe_len(511, 0xffff), Some(0xffff*512-1));
+        assert_eq!(decode_exe_len(0, 0xffff), Some(0xffff*512));
+
+        // When e_cp == 0, e_cblp must be 0, otherwise it would encode a negative
+        // length.
+        assert_eq!(decode_exe_len(1, 0), None);
+        assert_eq!(decode_exe_len(511, 0), None);
+        // e_cblp must be <= 511.
+        assert_eq!(decode_exe_len(512, 1), None);
     }
 
     #[test]
