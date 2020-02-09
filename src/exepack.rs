@@ -60,44 +60,6 @@ fn push_u16le(buf: &mut Vec<u8>, v: u16) {
     buf.extend(&u16::to_le_bytes(v));
 }
 
-#[derive(Debug)]
-pub enum Error {
-    Io(io::Error),
-    Exe(exe::FormatError),
-    Exepack(FormatError),
-}
-
-impl From<io::Error> for Error {
-    fn from(err: io::Error) -> Self {
-        Error::Io(err)
-    }
-}
-
-impl From<exe::Error> for Error {
-    fn from(err: exe::Error) -> Self {
-        match err {
-            exe::Error::Io(err) => Error::Io(err),
-            exe::Error::Format(err) => Error::Exe(err),
-        }
-    }
-}
-
-impl From<FormatError> for Error {
-    fn from(err: FormatError) -> Self {
-        Error::Exepack(err)
-    }
-}
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Error::Io(err) => err.fmt(f),
-            Error::Exe(err) => err.fmt(f),
-            Error::Exepack(err) => err.fmt(f),
-        }
-    }
-}
-
 #[derive(Debug, PartialEq)]
 pub enum FormatError {
     RelocationsNotSupported,
@@ -119,6 +81,8 @@ pub enum FormatError {
     CompressedTooLong(usize),
     SSTooLarge(usize),
 }
+
+impl std::error::Error for FormatError {}
 
 impl fmt::Display for FormatError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -409,7 +373,7 @@ fn compress(output: &mut Vec<u8>, input: &[u8]) {
 }
 
 /// Encode a compressed relocation table.
-fn encode_relocs(buf: &mut Vec<u8>, relocs: &[exe::Pointer]) -> Result<(), Error> {
+fn encode_relocs(buf: &mut Vec<u8>, relocs: &[exe::Pointer]) -> Result<(), FormatError> {
     // http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK#Relocation_Table
     let mut relocs: Vec<_> = relocs.iter().cloned().collect();
     relocs.sort();
@@ -429,13 +393,13 @@ fn encode_relocs(buf: &mut Vec<u8>, relocs: &[exe::Pointer]) -> Result<(), Error
         i = j;
     }
     if i < relocs.len() {
-        return Err(Error::Exepack(FormatError::RelocationAddrTooLarge(relocs[i])));
+        return Err(FormatError::RelocationAddrTooLarge(relocs[i]));
     }
     Ok(())
 }
 
 /// Pack an input executable and return the elements of the packed executable.
-pub fn pack(exe: &exe::Exe) -> Result<exe::Exe, Error> {
+pub fn pack(exe: &exe::Exe) -> Result<exe::Exe, FormatError> {
     let mut uncompressed = exe.body.clone();
     // Pad uncompressed to a multiple of 16 bytes.
     {
@@ -472,11 +436,11 @@ pub fn pack(exe: &exe::Exe) -> Result<exe::Exe, Error> {
         real_ip: exe.e_ip,
         real_cs: exe.e_cs,
         exepack_size: exepack_size.try_into()
-            .or(Err(Error::Exepack(FormatError::ExepackTooLong(exepack_size))))?,
+            .or(Err(FormatError::ExepackTooLong(exepack_size)))?,
         real_sp: exe.e_sp,
         real_ss: exe.e_ss,
         dest_len: (uncompressed.len() / 16).try_into()
-            .or(Err(Error::Exepack(FormatError::UncompressedTooLong(uncompressed.len()))))?,
+            .or(Err(FormatError::UncompressedTooLong(uncompressed.len())))?,
         skip_len: 1,
         signature: EXEPACK_MAGIC,
     });
@@ -1085,7 +1049,7 @@ mod tests {
             exe.relocs.push(pointer);
             maybe_save_exe(format!("tests/reloc_{:04x}:{:04x}.exe", pointer.segment, pointer.offset), &exe).unwrap();
             match pack(&exe) {
-                Err(Error::Exepack(FormatError::RelocationAddrTooLarge(_))) => (),
+                Err(FormatError::RelocationAddrTooLarge(_)) => (),
                 x => panic!("{:?} {}", x, pointer),
             }
         }
@@ -1108,15 +1072,11 @@ mod tests {
         //   uncompressed size.
         // - the EXE header cs field needs to be greater than the compressed size.
 
-        // Check for an EXE or EXEPACK error in a macro, for meaningful line numbers
-        // in test output.
+        // Check for an error in a macro, for meaningful line numbers in test
+        // output.
         macro_rules! want_error {
             ($r:expr) => {
-                match $r {
-                    Err(Error::Exe(_)) => (),
-                    Err(Error::Exepack(_)) => (),
-                    x => panic!("{:?}", x),
-                }
+                assert!($r.is_err(), $r);
             }
         }
 
@@ -1281,7 +1241,7 @@ mod tests {
         pack(&exe).unwrap()
     }
 
-    fn save_exe<P: AsRef<path::Path>>(path: P, exe: &exe::Exe) -> Result<(), Error> {
+    fn save_exe<P: AsRef<path::Path>>(path: P, exe: &exe::Exe) -> Result<(), Box<dyn std::error::Error>> {
         let f = fs::File::create(path)?;
         let mut w = io::BufWriter::new(f);
         exe.write(&mut w)?;
@@ -1290,7 +1250,7 @@ mod tests {
     }
 
     // call save_exe if the environment variable EXEPACK_TEST_SAVE_EXE is set.
-    fn maybe_save_exe<P: AsRef<path::Path>>(path: P, exe: &exe::Exe) -> Result<(), Error> {
+    fn maybe_save_exe<P: AsRef<path::Path>>(path: P, exe: &exe::Exe) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(_) = env::var_os("EXEPACK_TEST_SAVE_EXE") {
             save_exe(path, exe)?;
         }

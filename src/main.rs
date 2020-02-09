@@ -38,21 +38,64 @@ mod exe;
 mod exepack;
 mod pointer;
 
-struct TopLevelError {
-    path: Option<PathBuf>,
-    kind: exepack::Error,
+#[derive(Debug)]
+enum Error {
+    Io(io::Error),
+    Exe(exe::FormatError),
+    Exepack(exepack::FormatError),
 }
 
-impl fmt::Display for TopLevelError {
+impl std::error::Error for Error {}
+
+impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            TopLevelError { path: None, kind } => kind.fmt(f),
-            TopLevelError { path: Some(path), kind } => write!(f, "{}: {}", path.display(), kind),
+            Error::Io(err) => err.fmt(f),
+            Error::Exe(err) => err.fmt(f),
+            Error::Exepack(err) => err.fmt(f),
         }
     }
 }
 
-fn write_exe_file<P: AsRef<Path>>(path: P, exe: &exe::Exe) -> Result<u64, exepack::Error> {
+impl From<io::Error> for Error {
+    fn from(err: io::Error) -> Self {
+        Error::Io(err)
+    }
+}
+
+impl From<exe::Error> for Error {
+    fn from(err: exe::Error) -> Self {
+        match err {
+            exe::Error::Io(err) => Error::Io(err),
+            exe::Error::Format(err) => Error::Exe(err),
+        }
+    }
+}
+
+impl From<exepack::FormatError> for Error {
+    fn from(err: exepack::FormatError) -> Self {
+        Error::Exepack(err)
+    }
+}
+
+#[derive(Debug)]
+struct TopLevelError {
+    path: Option<PathBuf>,
+    err: Error,
+}
+
+impl std::error::Error for TopLevelError {}
+
+impl fmt::Display for TopLevelError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            TopLevelError { path: None, err } => err.fmt(f),
+            TopLevelError { path: Some(path), err } => write!(f, "{}: {}", path.display(), err),
+        }
+    }
+}
+
+fn write_exe_file<P: AsRef<Path>>(path: P, exe: &exe::Exe) -> Result<u64, Error> {
     let f = File::create(&path)?;
     let mut f = io::BufWriter::new(f);
     let n = exe.write(&mut f)?;
@@ -60,19 +103,20 @@ fn write_exe_file<P: AsRef<Path>>(path: P, exe: &exe::Exe) -> Result<u64, exepac
     Ok(n)
 }
 
-fn pack_file<P: AsRef<Path>>(path: P) -> Result<exe::Exe, exepack::Error> {
+fn pack_file<P: AsRef<Path>>(path: P) -> Result<exe::Exe, Error> {
     let f = File::open(&path)?;
     let file_len = f.metadata()?.len();
     let mut f = io::BufReader::new(f);
     let exe = exe::Exe::read(&mut f, Some(file_len))?;
-    exepack::pack(&exe)
+    exepack::pack(&exe)?;
+    Ok(exe)
 }
 
 fn compress_mode<P: AsRef<Path>>(input_path: P, output_path: P) -> Result<(), TopLevelError> {
     let exe = match pack_file(&input_path) {
         Err(err) => return Err(TopLevelError {
             path: Some(input_path.as_ref().to_path_buf()),
-            kind: err,
+            err: err,
         }),
         Ok(f) => f,
     };
@@ -80,14 +124,14 @@ fn compress_mode<P: AsRef<Path>>(input_path: P, output_path: P) -> Result<(), To
     if let Err(err) = write_exe_file(&output_path, &exe) {
         return Err(TopLevelError {
             path: Some(output_path.as_ref().to_path_buf()),
-            kind: err,
+            err: err,
         });
     }
 
     Ok(())
 }
 
-fn unpack_file<P: AsRef<Path>>(path: P) -> Result<exe::Exe, exepack::Error> {
+fn unpack_file<P: AsRef<Path>>(path: P) -> Result<exe::Exe, Error> {
     let f = File::open(&path)?;
     let file_len = f.metadata()?.len();
     let mut f = io::BufReader::new(f);
@@ -99,7 +143,7 @@ fn decompress_mode<P: AsRef<Path>>(input_path: P, output_path: P) -> Result<(), 
     let exe = match unpack_file(&input_path) {
         Err(err) => return Err(TopLevelError {
             path: Some(input_path.as_ref().to_path_buf()),
-            kind: err,
+            err: err,
         }),
         Ok(f) => f,
     };
@@ -107,7 +151,7 @@ fn decompress_mode<P: AsRef<Path>>(input_path: P, output_path: P) -> Result<(), 
     if let Err(err) = write_exe_file(&output_path, &exe) {
         return Err(TopLevelError {
             path: Some(output_path.as_ref().to_path_buf()),
-            kind: err,
+            err: err,
         });
     }
 
@@ -236,8 +280,8 @@ fn main() {
     } else {
         compress_mode(&input_path, &output_path)
     } {
-        match err.kind {
-            exepack::Error::Exepack(exepack::FormatError::UnknownStub(ref exepack_header_buffer, ref stub)) => {
+        match err.err {
+            Error::Exepack(exepack::FormatError::UnknownStub(ref exepack_header_buffer, ref stub)) => {
                 // UnknownStub gets special treatment. We search for "Packed
                 // file is corrupt" and display the stub if it is found, or warn
                 // that the input may not be EXEPACK if it is not.
