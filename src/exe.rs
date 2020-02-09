@@ -4,8 +4,13 @@ use std::convert::TryInto;
 use std::fmt;
 use std::io::{self, prelude::*};
 
-use crate::read_u16le;
 pub use pointer::Pointer;
+
+fn read_u16le<R: Read + ?Sized>(r: &mut R) -> io::Result<u16> {
+    let mut buf = [0; 2];
+    r.read_exact(&mut buf)?;
+    Ok((buf[0] as u16) | ((buf[1] as u16) << 8))
+}
 
 /// Adds a prefix to the message of an `io::Error`.
 fn annotate_io_error(err: io::Error, msg: &str) -> io::Error {
