@@ -65,14 +65,14 @@ pub enum FormatError {
 impl fmt::Display for FormatError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            &FormatError::BadMagic(e_magic) => write!(f, "Bad EXE magic 0x{:04x}; expected 0x{:04x}", e_magic, MAGIC),
-            &FormatError::BadNumPages(e_cp, e_cblp) => write!(f, "Bad EXE size ({}, {})", e_cp, e_cblp),
-            &FormatError::HeaderTooShort(header_len) => write!(f, "EXE header of {} bytes is too small", header_len),
-            &FormatError::RelocationsOverlapHeader(relocs_offset) => write!(f, "Relocations starting at 0x{:04x} overlap the EXE header", relocs_offset),
-            &FormatError::TooManyRelocations(n) => write!(f, "{} relocations are too many to fit in 16 bits", n),
-            &FormatError::TooShort(exe_len, header_len) => write!(f, "EXE size of {} bytes is too small to contain header of {} bytes", exe_len, header_len),
-            &FormatError::TooLong(len) => write!(f, "EXE size of {} bytes is too large to represent", len),
-            &FormatError::HeaderTooLong(len) => write!(f, "EXE header size of {} bytes is too large to represent", len),
+            FormatError::BadMagic(e_magic) => write!(f, "Bad EXE magic 0x{:04x}; expected 0x{:04x}", e_magic, MAGIC),
+            FormatError::BadNumPages(e_cp, e_cblp) => write!(f, "Bad EXE size ({}, {})", e_cp, e_cblp),
+            FormatError::HeaderTooShort(header_len) => write!(f, "EXE header of {} bytes is too small", header_len),
+            FormatError::RelocationsOverlapHeader(relocs_offset) => write!(f, "Relocations starting at 0x{:04x} overlap the EXE header", relocs_offset),
+            FormatError::TooManyRelocations(n) => write!(f, "{} relocations are too many to fit in 16 bits", n),
+            FormatError::TooShort(exe_len, header_len) => write!(f, "EXE size of {} bytes is too small to contain header of {} bytes", exe_len, header_len),
+            FormatError::TooLong(len) => write!(f, "EXE size of {} bytes is too large to represent", len),
+            FormatError::HeaderTooLong(len) => write!(f, "EXE header size of {} bytes is too large to represent", len),
         }
     }
 }

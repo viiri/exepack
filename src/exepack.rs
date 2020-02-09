@@ -91,9 +91,9 @@ impl From<FormatError> for Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            &Error::Io(ref err) => err.fmt(f),
-            &Error::Exe(ref err) => err.fmt(f),
-            &Error::Exepack(ref err) => err.fmt(f),
+            Error::Io(err) => err.fmt(f),
+            Error::Exe(err) => err.fmt(f),
+            Error::Exepack(err) => err.fmt(f),
         }
     }
 }
@@ -123,43 +123,43 @@ pub enum FormatError {
 impl fmt::Display for FormatError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            &FormatError::RelocationsNotSupported =>
+            FormatError::RelocationsNotSupported =>
                 write!(f, "relocations before decompression are not supported"),
-            &FormatError::HeaderPastEndOfFile(offset) =>
+            FormatError::HeaderPastEndOfFile(offset) =>
                 write!(f, "EXEPACK header at 0x{:x} is past the end of the file", offset),
-            &FormatError::UnknownStub(ref _header_buffer, ref _stub) =>
+            FormatError::UnknownStub(_header_buffer, _stub) =>
                 write!(f, "Unknown decompression stub"),
-            &FormatError::BadMagic(magic) =>
+            FormatError::BadMagic(magic) =>
                 write!(f, "EXEPACK header has bad magic 0x{:04x}; expected 0x{:04x}", magic, EXEPACK_MAGIC),
-            &FormatError::UnknownHeaderLength(header_len) =>
+            FormatError::UnknownHeaderLength(header_len) =>
                 write!(f, "don't know how to interpret EXEPACK header of {} bytes", header_len),
-            &FormatError::SkipTooShort(skip_len) =>
+            FormatError::SkipTooShort(skip_len) =>
                 write!(f, "EXEPACK skip_len of {} paragraphs is invalid", skip_len),
-            &FormatError::SkipTooLong(skip_len) =>
+            FormatError::SkipTooLong(skip_len) =>
                 write!(f, "EXEPACK skip_len of {} paragraphs is too long", skip_len),
-            &FormatError::ExepackTooShort(exepack_size) =>
+            FormatError::ExepackTooShort(exepack_size) =>
                 write!(f, "EXEPACK size of {} bytes is too short for header, stub, and relocations", exepack_size),
-            &FormatError::SrcOverflow() =>
+            FormatError::SrcOverflow() =>
                 write!(f, "reached end of compressed stream without seeing a termination command"),
-            &FormatError::FillOverflow(dst, _src, _command, length, fill) =>
+            FormatError::FillOverflow(dst, _src, _command, length, fill) =>
                 write!(f, "write overflow: fill {}×'\\{:02x}' at index {}", length, fill, dst),
-            &FormatError::CopyOverflow(dst, src, _command, length) =>
+            FormatError::CopyOverflow(dst, src, _command, length) =>
                 write!(f, "{}: copy {} bytes from index {} to index {}",
                     if src < length { "read overflow" } else { "write overflow" },
                     length, src, dst),
-            &FormatError::BogusCommand(src, command, length) =>
+            FormatError::BogusCommand(src, command, length) =>
                 write!(f, "unknown command 0x{:02x} with ostensible length {} at index {}", command, length, src),
-            &FormatError::Gap(dst, original_src) =>
+            FormatError::Gap(dst, original_src) =>
                 write!(f, "decompression left a gap of {} unwritten bytes between write index {} and original read index {}", dst - original_src, dst, original_src),
-            &FormatError::UncompressedTooLong(len) =>
+            FormatError::UncompressedTooLong(len) =>
                 write!(f, "uncompressed size {} is too large to represent in an EXEPACK header", len),
-            &FormatError::RelocationAddrTooLarge(ref pointer) =>
+            FormatError::RelocationAddrTooLarge(pointer) =>
                 write!(f, "relocation address {} is too large to represent in the EXEPACK table", pointer),
-            &FormatError::ExepackTooLong(len) =>
+            FormatError::ExepackTooLong(len) =>
                 write!(f, "EXEPACK area is too long at {} bytes", len),
-            &FormatError::CompressedTooLong(len) =>
+            FormatError::CompressedTooLong(len) =>
                 write!(f, "compressed data of {} bytes is too large to represent", len),
-            &FormatError::SSTooLarge(ss) =>
+            FormatError::SSTooLarge(ss) =>
                 write!(f, "stack segment 0x{:04x} is too large to represent", ss),
         }
     }

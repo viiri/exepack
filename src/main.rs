@@ -46,8 +46,8 @@ struct TopLevelError {
 impl fmt::Display for TopLevelError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            &TopLevelError { path: None, ref kind } => kind.fmt(f),
-            &TopLevelError { path: Some(ref path), ref kind } => write!(f, "{}: {}", path.display(), kind),
+            TopLevelError { path: None, kind } => kind.fmt(f),
+            TopLevelError { path: Some(path), kind } => write!(f, "{}: {}", path.display(), kind),
         }
     }
 }
