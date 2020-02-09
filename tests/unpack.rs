@@ -2,7 +2,7 @@ extern crate exepack;
 
 use std::env;
 use std::fs;
-use std::io::{self, Seek, Write};
+use std::io::{self, Write};
 use std::iter;
 use std::path;
 use std::str;
@@ -25,7 +25,8 @@ fn unpacked_sample() -> exe::Exe {
 
 fn packed_sample() -> exe::Exe {
     let mut f = fs::File::open("tests/hello.exe").unwrap();
-    exepack::pack(&mut f, None).unwrap()
+    let exe = exe::Exe::read(&mut f, None).unwrap();
+    exepack::pack(&exe).unwrap()
 }
 
 fn save_exe<P: AsRef<path::Path>>(path: P, exe: &exe::Exe) -> Result<(), exepack::Error> {
@@ -44,22 +45,13 @@ fn maybe_save_exe<P: AsRef<path::Path>>(path: P, exe: &exe::Exe) -> Result<(), e
     Ok(())
 }
 
-// a version of exepack::unpack that works from a source EXE rather than an
-// io::Read, with no size hint.
-fn unpack(source: &exe::Exe) -> Result<exe::Exe, exepack::Error> {
-    let mut f = io::Cursor::new(Vec::new());
-    source.write(&mut f).unwrap();
-    f.seek(io::SeekFrom::Start(0)).unwrap();
-    exepack::unpack(&mut f, None)
-}
-
 #[test]
 fn test_unpack_bad_exepack_magic() {
     let mut sample = packed_sample();
     store_u16le(&mut sample.body, sample.e_cs as usize * 16 + 16, 0x1234);
     maybe_save_exe("tests/bad_exepack_magic.exe", &sample).unwrap();
-    match unpack(&sample) {
-        Err(exepack::Error::Exepack(exepack::ExepackFormatError::BadMagic(0x1234))) => (),
+    match exepack::unpack(&sample) {
+        Err(exepack::ExepackFormatError::BadMagic(0x1234)) => (),
         x => panic!("{:?}", x),
     }
 }
@@ -70,8 +62,8 @@ fn test_unpack_short_exepack_header() {
     sample.e_ip = 14;
     store_u16le(&mut sample.body, sample.e_cs as usize * 16 + 16, 0x1234);
     maybe_save_exe("tests/short_exepack_header.exe", &sample).unwrap();
-    match unpack(&sample) {
-        Err(exepack::Error::Exepack(exepack::ExepackFormatError::UnknownHeaderLength(14))) => (),
+    match exepack::unpack(&sample) {
+        Err(exepack::ExepackFormatError::UnknownHeaderLength(14)) => (),
         x => panic!("{:?}", x),
     }
 }
@@ -82,8 +74,8 @@ fn test_unpack_long_exepack_header() {
     sample.e_ip = 20;
     store_u16le(&mut sample.body, sample.e_cs as usize * 16 + 16, 0x1234);
     maybe_save_exe("tests/long_exepack_header.exe", &sample).unwrap();
-    match unpack(&sample) {
-        Err(exepack::Error::Exepack(exepack::ExepackFormatError::UnknownHeaderLength(20))) => (),
+    match exepack::unpack(&sample) {
+        Err(exepack::ExepackFormatError::UnknownHeaderLength(20)) => (),
         x => panic!("{:?}", x),
     }
 }
@@ -95,8 +87,8 @@ fn test_unpack_unknown_stub() {
     let message = sample.e_cs as usize * 16 + sample.e_ip as usize + exepack::STUB.len() - 22;
     sample.body[message - 5] ^= 0xff;
     maybe_save_exe("tests/exepack_unknown_stub.exe", &sample).unwrap();
-    match unpack(&sample) {
-        Err(exepack::Error::Exepack(exepack::ExepackFormatError::UnknownStub(_, _))) => (),
+    match exepack::unpack(&sample) {
+        Err(exepack::ExepackFormatError::UnknownStub(_, _)) => (),
         x => panic!("{:?}", x),
     }
 }
@@ -108,34 +100,40 @@ fn test_unpack_relocations() {
     let mut sample = packed_sample();
     sample.relocs.push(exepack::Pointer { segment: 0x0012, offset: 0x3400 });
     maybe_save_exe("tests/exepack_with_relocs.exe", &sample).unwrap();
-    match unpack(&sample) {
-        Err(exepack::Error::Exepack(exepack::ExepackFormatError::RelocationsNotSupported(1, 28))) => (),
+    match exepack::unpack(&sample) {
+        Err(exepack::ExepackFormatError::RelocationsNotSupported) => (),
         x => panic!("{:?}", x),
     }
 }
 
 #[test]
 fn test_unpack_short_exepack_size() {
-    for &exepack_size in &[
-        10,     // shorter than EXEPACK header
-        100,    // shorter than stub
-        18 + exepack::STUB.len() + 2,   // shorter than packed relocations
-    ] {
+    fn test_unpack(exepack_size: u16) -> Result<exe::Exe, exepack::ExepackFormatError> {
         let mut sample = packed_sample();
         store_u16le(&mut sample.body, sample.e_cs as usize * 16 + 6, exepack_size as u16);
         maybe_save_exe(format!("tests/exepack_size_{}.exe", exepack_size), &sample).unwrap();
-        match unpack(&sample) {
-            Err(exepack::Error::Exepack(exepack::ExepackFormatError::ExepackTooShort(_, _))) => (),
-            Err(exepack::Error::Io(ref err)) if err.kind() == io::ErrorKind::UnexpectedEof => (),
-            x => panic!("{:?}", x),
-        }
+        exepack::unpack(&sample)
+    }
+    // exepack_size shorter than EXEPACK header
+    match test_unpack(10) {
+        Err(exepack::ExepackFormatError::ExepackTooShort(_)) => (),
+        x => panic!("{:?}", x),
+    }
+    // exepack_size shorter than EXEPACK header + stub
+    match test_unpack(100) {
+        Err(exepack::ExepackFormatError::UnknownStub(_, _)) => (),
+        x => panic!("{:?}", x),
+    }
+    // exepack_size shorter than EXEPACK header + stub + packed relocations
+    match test_unpack((18 + exepack::STUB.len() + 2) as u16) {
+        Err(exepack::ExepackFormatError::ExepackTooShort(_)) => (),
+        x => panic!("{:?}", x),
     }
 }
 
 // We don't ask for perfect identity in comparing EXEs. The packing/unpacking
 // roundtrip may change the size of the header, and may add padding to the end
-// of the body. The location of the relocation table may change. We don't check
-// the checksums.
+// of the body. The location of the relocation table may change.
 fn check_exes_equivalent(a: &exe::Exe, b: &exe::Exe) {
     // Let a be the one with the shorter body.
     let (a, b) = if a.body.len() <= b.body.len() {
@@ -186,7 +184,7 @@ fn test_unpack_altered_message() {
             message_buf.copy_from_slice(&message[..]);
         }
         maybe_save_exe(format!("tests/exepack_message_{}.exe", str::replace(str::from_utf8(&message[..]).unwrap(), " ", "_")), &sample).unwrap();
-        check_exes_equivalent(&original, &unpack(&sample).unwrap());
+        check_exes_equivalent(&original, &exepack::unpack(&sample).unwrap());
     }
 }
 
@@ -197,7 +195,7 @@ fn test_unpack_trailing_garbage() {
     let mut sample = packed_sample();
     sample.body.extend(iter::repeat(b'X').take(64));
     maybe_save_exe("tests/exe_trailing_garbage.exe", &sample).unwrap();
-    check_exes_equivalent(&original, &unpack(&sample).unwrap());
+    check_exes_equivalent(&original, &exepack::unpack(&sample).unwrap());
 
     // but if it's inside exepack_size, it means the relocation table was not as
     // long as we thought it should be, so we may have guessed the end of the
@@ -205,8 +203,8 @@ fn test_unpack_trailing_garbage() {
     let exepack_size = fetch_u16le(&sample.body, sample.e_cs as usize * 16 + 6);
     store_u16le(&mut sample.body, sample.e_cs as usize * 16 + 6, exepack_size as u16 + 64);
     maybe_save_exe("tests/exepack_trailing_garbage.exe", &sample).unwrap();
-    match unpack(&sample) {
-        Err(exepack::Error::Exepack(exepack::ExepackFormatError::UnknownStub(_, _))) => (),
+    match exepack::unpack(&sample) {
+        Err(exepack::ExepackFormatError::UnknownStub(_, _)) => (),
         x => panic!("{:?}", x),
     }
 }
@@ -218,8 +216,8 @@ fn test_unpack_skip_len() {
         let mut sample = packed_sample();
         store_u16le(&mut sample.body, sample.e_cs as usize * 16 + 14, 0);
         maybe_save_exe(format!("tests/exepack_skip_len_{}.exe", 0), &sample).unwrap();
-        match unpack(&sample) {
-            Err(exepack::Error::Exepack(exepack::ExepackFormatError::SkipTooShort(0))) => (),
+        match exepack::unpack(&sample) {
+            Err(exepack::ExepackFormatError::SkipTooShort(0)) => (),
             x => panic!("{:?}", x),
         }
     }
@@ -238,7 +236,7 @@ fn test_unpack_skip_len() {
         // insert skip padding
         sample.body.splice(start..start, iter::repeat(0xaa).take(16 * (skip_len - 1) as usize));
         maybe_save_exe(format!("tests/exepack_skip_len_{}_good.exe", skip_len), &sample).unwrap();
-        check_exes_equivalent(&original, &unpack(&sample).unwrap());
+        check_exes_equivalent(&original, &exepack::unpack(&sample).unwrap());
     }
 
     // skip_len that doesn't agree with cs and dest_len is an error
@@ -249,8 +247,8 @@ fn test_unpack_skip_len() {
         // increased skip_len but didn't actually add padding, nor adjust
         // dest_len and cs
         maybe_save_exe(format!("tests/exepack_skip_len_{}_bad.exe", skip_len), &sample).unwrap();
-        match unpack(&sample) {
-            Err(exepack::Error::Exepack(exepack::ExepackFormatError::SkipTooLong(_))) => (),
+        match exepack::unpack(&sample) {
+            Err(exepack::ExepackFormatError::SkipTooLong(_)) => (),
             x => panic!("{:?}", x),
         }
     }

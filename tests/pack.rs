@@ -5,7 +5,7 @@ extern crate exepack;
 
 use std::env;
 use std::fs;
-use std::io::{self, Seek, Write};
+use std::io::{self, Write};
 use std::iter;
 use std::path;
 
@@ -70,24 +70,6 @@ fn maybe_save_exe<P: AsRef<path::Path>>(path: P, exe: &exe::Exe) -> Result<(), e
     Ok(())
 }
 
-// a version of exepack::pack that works from a source EXE rather than an
-// io::Read, with no size hint.
-fn pack(source: &exe::Exe) -> Result<exe::Exe, exepack::Error> {
-    let mut f = io::Cursor::new(Vec::new());
-    source.write(&mut f).unwrap();
-    f.seek(io::SeekFrom::Start(0)).unwrap();
-    exepack::pack(&mut f, None)
-}
-
-// a version of exepack::unpack that works from a source EXE rather than an
-// io::Read, with no size hint.
-fn unpack(source: &exe::Exe) -> Result<exe::Exe, exepack::Error> {
-    let mut f = io::Cursor::new(Vec::new());
-    source.write(&mut f).unwrap();
-    f.seek(io::SeekFrom::Start(0)).unwrap();
-    exepack::unpack(&mut f, None)
-}
-
 #[test]
 fn test_pack_relocs() {
     // two encodings of the largest relocation address EXEPACK can represent.
@@ -100,7 +82,7 @@ fn test_pack_relocs() {
         let mut exe = make_compressible_exe(128, 0);
         exe.relocs.push(pointer);
         maybe_save_exe(format!("tests/reloc_{:04x}:{:04x}.exe", pointer.segment, pointer.offset), &exe).unwrap();
-        let out = pack(&exe).unwrap();
+        let out = exepack::pack(&exe).unwrap();
         maybe_save_exe(format!("tests/reloc_{:04x}:{:04x}.packed.exe", pointer.segment, pointer.offset), &out).unwrap();
     }
 
@@ -114,7 +96,7 @@ fn test_pack_relocs() {
         let mut exe = make_compressible_exe(128, 0);
         exe.relocs.push(pointer);
         maybe_save_exe(format!("tests/reloc_{:04x}:{:04x}.exe", pointer.segment, pointer.offset), &exe).unwrap();
-        match pack(&exe) {
+        match exepack::pack(&exe) {
             Err(exepack::Error::Exepack(exepack::ExepackFormatError::RelocationAddrTooLarge(_))) => (),
             x => panic!("{:?} {}", x, pointer),
         }
@@ -159,12 +141,12 @@ fn test_pack_lengths() {
     let len = 16 * 0xffff;
     let exe = make_compressible_exe(len, 0);
     maybe_save_exe("tests/maxlen_compressible.exe", &exe).unwrap();
-    let out = pack(&exe).unwrap();
+    let out = exepack::pack(&exe).unwrap();
     maybe_save_exe("tests/maxlen_compressible.packed.exe", &out).unwrap();
     // 1 byte longer is an error.
     let exe = make_compressible_exe(len + 1, 0);
     maybe_save_exe("tests/maxlen+1_compressible.exe", &exe).unwrap();
-    want_error!(pack(&exe));
+    want_error!(exepack::pack(&exe));
 
     // Relocations take up space, 2 bytes per; however part of the additional
     // space can be shared within the decompression buffer (below dest_len).
@@ -181,16 +163,16 @@ fn test_pack_lengths() {
     let len = 16 * 0xfffd;
     let exe = make_compressible_exe(len, num_relocs);
     maybe_save_exe("tests/maxlen_maxrelocs_compressible.exe", &exe).unwrap();
-    let out = pack(&exe).unwrap();
+    let out = exepack::pack(&exe).unwrap();
     maybe_save_exe("tests/maxlen_maxrelocs_compressible.packed.exe", &out).unwrap();
     // 1 byte longer is an error.
     let exe = make_compressible_exe(len + 1, num_relocs);
     maybe_save_exe("tests/maxlen+1_maxrelocs_compressible.exe", &exe).unwrap();
-    want_error!(pack(&exe));
+    want_error!(exepack::pack(&exe));
     // 1 more relocation is an error.
     let exe = make_compressible_exe(len, num_relocs + 1);
     maybe_save_exe("tests/maxlen_maxrelocs+1_compressible.exe", &exe).unwrap();
-    want_error!(pack(&exe));
+    want_error!(exepack::pack(&exe));
 
     // Maximum size incompressible inputs.
     // The main constraint here is no longer dest_len, but e_cs in the EXE
@@ -203,12 +185,12 @@ fn test_pack_lengths() {
     let len = 16 * 0xffff - 4;
     let exe = make_incompressible_exe(len, 0);
     maybe_save_exe("tests/maxlen_incompressible.exe", &exe).unwrap();
-    let out = pack(&exe).unwrap();
+    let out = exepack::pack(&exe).unwrap();
     maybe_save_exe("tests/maxlen_incompressible.packed.exe", &out).unwrap();
     // 1 byte longer input is an error.
     let exe = make_incompressible_exe(len + 1, 0);
     maybe_save_exe("tests/maxlen+1_incompressible.exe", &exe).unwrap();
-    want_error!(pack(&exe));
+    want_error!(exepack::pack(&exe));
 
     // Relocations take up additional space. The size of the EXEPACK block
     // rounds up to 0x10000, so our ceiling is now 16*0xeffd, and the same logic
@@ -218,16 +200,16 @@ fn test_pack_lengths() {
     let len = 16 * 0xeffd - 4;
     let exe = make_incompressible_exe(len, num_relocs);
     maybe_save_exe("tests/maxlen_maxrelocs_incompressible.exe", &exe).unwrap();
-    let out = pack(&exe).unwrap();
+    let out = exepack::pack(&exe).unwrap();
     maybe_save_exe("tests/maxlen_maxrelocs_incompressible.packed.exe", &out).unwrap();
     // 1 byte longer is an error.
     let exe = make_incompressible_exe(len + 1, num_relocs);
     maybe_save_exe("tests/maxlen+1_maxrelocs_incompressible.exe", &exe).unwrap();
-    want_error!(pack(&exe));
+    want_error!(exepack::pack(&exe));
     // 1 more relocation is an error.
     let exe = make_incompressible_exe(len, num_relocs + 1);
     maybe_save_exe("tests/maxlen_maxrelocs+1_incompressible.exe", &exe).unwrap();
-    want_error!(pack(&exe));
+    want_error!(exepack::pack(&exe));
 }
 
 // We don't ask for perfect identity in comparing EXEs. The packing/unpacking
@@ -273,9 +255,9 @@ fn pack_roundtrip_count(count: usize, max: usize, exe: exe::Exe) -> exe::Exe {
     if count + 1 > max {
         return exe;
     }
-    let packed = pack_roundtrip_count(count + 1, max, pack(&exe).unwrap());
+    let packed = pack_roundtrip_count(count + 1, max, exepack::pack(&exe).unwrap());
     maybe_save_exe(format!("tests/hello_roundtrip_{}.packed.exe", count + 1), &packed).unwrap();
-    let unpacked = unpack(&packed).unwrap();
+    let unpacked = exepack::unpack(&packed).unwrap();
     maybe_save_exe(format!("tests/hello_roundtrip_{}.unpacked.exe", count), &unpacked).unwrap();
     check_exes_equivalent(count, &exe, &unpacked);
     unpacked

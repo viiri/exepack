@@ -119,7 +119,7 @@ fn test_read_exe_len() {
         store_u16le(&mut sample, 4, e_cp as u16);
         maybe_save_exe(format!("tests/exe_len_{}.exe", len), &sample).unwrap();
         match read_exe(&sample) {
-            Err(exe::Error::Format(exe::FormatError::BadNumPages(_, _))) => (),
+            Err(exe::Error::Format(exe::FormatError::TooShort(_, _))) => (),
             x => panic!("{:?}", x),
         }
     }
@@ -148,18 +148,17 @@ fn test_read_exe_overlaps() {
         store_u16le(&mut sample, 8, 1);
         maybe_save_exe("tests/cparhdr_short_header.exe", &sample).unwrap();
         match read_exe(&sample) {
-            Err(exe::Error::Format(exe::FormatError::HeaderTooShort(1))) => (),
+            Err(exe::Error::Format(exe::FormatError::HeaderTooShort(16))) => (),
             x => panic!("{:?}", x),
         }
     }
     {
         let mut sample = sample.clone();
         // e_cparhdr = 2, in the middle of the relocations
-        // gets interpreted as "relocations outside header"
         store_u16le(&mut sample, 8, 2);
         maybe_save_exe("tests/cparhdr_short_relocs.exe", &sample).unwrap();
         match read_exe(&sample) {
-            Err(exe::Error::Format(exe::FormatError::RelocationsOutsideHeader(2, 28))) => (),
+            Err(exe::Error::Format(exe::FormatError::HeaderTooShort(32))) => (),
             x => panic!("{:?}", x),
         }
     }
@@ -169,7 +168,7 @@ fn test_read_exe_overlaps() {
         store_u16le(&mut sample, 24, 128);
         maybe_save_exe("tests/cparhdr_relocs_outside_header.exe", &sample).unwrap();
         match read_exe(&sample) {
-            Err(exe::Error::Format(exe::FormatError::RelocationsOutsideHeader(2, 128))) => (),
+            Err(exe::Error::Format(exe::FormatError::HeaderTooShort(64))) => (),
             x => panic!("{:?}", x),
         }
     }

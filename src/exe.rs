@@ -1,6 +1,5 @@
 //! Reading and writing 16-bit DOS MZ executables.
 
-use std::cmp;
 use std::convert::TryInto;
 use std::fmt;
 use std::io::{self, prelude::*};
@@ -9,7 +8,9 @@ use crate::{annotate_io_error, read_u16le};
 use pointer::Pointer;
 
 const MAGIC: u16 = 0x5a4d; // "MZ"
-// The length of an EXE header excluding the variable-sized padding.
+
+/// The length of an EXE header, excluding relocations and variable-sized
+/// padding.
 const HEADER_LEN: u64 = 28;
 
 #[derive(Debug)]
@@ -43,10 +44,12 @@ impl From<FormatError> for Error {
 pub enum FormatError {
     BadMagic(u16),
     BadNumPages(u16, u16),
-    HeaderTooShort(u16),
-    RelocationsOutsideHeader(u16, u16),
+    HeaderTooShort(u64),
+    RelocationsOverlapHeader(u64),
     TooManyRelocations(usize),
+    TooShort(u64, u64),
     TooLong(usize),
+    HeaderTooLong(usize),
 }
 
 impl fmt::Display for FormatError {
@@ -54,10 +57,12 @@ impl fmt::Display for FormatError {
         match self {
             &FormatError::BadMagic(e_magic) => write!(f, "Bad EXE magic 0x{:04x}; expected 0x{:04x}", e_magic, MAGIC),
             &FormatError::BadNumPages(e_cp, e_cblp) => write!(f, "Bad EXE size ({}, {})", e_cp, e_cblp),
-            &FormatError::HeaderTooShort(e_cparhdr) => write!(f, "EXE header of {} bytes is too small", e_cparhdr as u64 * 16),
-            &FormatError::RelocationsOutsideHeader(e_crlc, e_lfarlc) => write!(f, "{} relocations starting at 0x{:04x} lie outside the EXE header", e_crlc, e_lfarlc),
+            &FormatError::HeaderTooShort(header_len) => write!(f, "EXE header of {} bytes is too small", header_len),
+            &FormatError::RelocationsOverlapHeader(relocs_offset) => write!(f, "Relocations starting at 0x{:04x} overlap the EXE header", relocs_offset),
             &FormatError::TooManyRelocations(n) => write!(f, "{} relocations are too many to fit in 16 bits", n),
-            &FormatError::TooLong(len) => write!(f, "EXE size of {} is too large to represent", len),
+            &FormatError::TooShort(exe_len, header_len) => write!(f, "EXE size of {} bytes is too small to contain header of {} bytes", exe_len, header_len),
+            &FormatError::TooLong(len) => write!(f, "EXE size of {} bytes is too large to represent", len),
+            &FormatError::HeaderTooLong(len) => write!(f, "EXE header size of {} bytes is too large to represent", len),
         }
     }
 }
@@ -76,16 +81,118 @@ pub struct Exe {
     pub e_cs: u16,
     pub e_ovno: u16,
 
-    // Everything following the header.
-    pub body: Vec<u8>,
-
     // Relocations from the header.
     pub relocs: Vec<Pointer>,
+
+    // The program body following the header.
+    pub body: Vec<u8>,
 }
 
 impl Exe {
-    /// Return a new `Header` appropriate for this `Exe`.
-    fn make_header(&self) -> Result<Header, FormatError> {
+    /// Reads an EXE file into an `Exe` structure.
+    ///
+    /// `file_len_hint` is an optional externally provided hint of
+    /// the input file's total length, which we use to emit a warning when it
+    /// exceeds the length stated in the EXE header.
+    pub fn read<R: Read + ?Sized>(input: &mut R, file_len_hint: Option<u64>) -> Result<Self, Error> {
+        // Read the fixed fields of the header.
+        {
+            let e_magic = read_u16le(input)?;
+            if e_magic != MAGIC {
+                return Err(Error::Format(FormatError::BadMagic(e_magic)));
+            }
+        }
+        let exe_len = {
+            let e_cblp = read_u16le(input)?;
+            let e_cp = read_u16le(input)?;
+            decode_exe_len(e_cblp, e_cp)
+                .ok_or(Error::Format(FormatError::BadNumPages(e_cp, e_cblp)))?
+        };
+        let num_relocs = {
+            let e_crlc = read_u16le(input)?;
+            e_crlc as usize
+        };
+        let header_len = {
+            let e_cparhdr = read_u16le(input)?;
+            e_cparhdr as u64 * 16
+        };
+        let e_minalloc = read_u16le(input)?;
+        let e_maxalloc = read_u16le(input)?;
+        let e_ss = read_u16le(input)?;
+        let e_sp = read_u16le(input)?;
+        // Ignore the checksum. I cannot find a clear specification of how it
+        // could be computed, and I have found no implementation of DOS that
+        // checks it.
+        // https://github.com/microsoft/MS-DOS/blob/80ab2fddfdf30f09f0a0a637654cbb3cd5c7baa6/v2.0/source/EXE2BIN.ASM#L79
+        // https://sourceforge.net/p/dosbox/code-0/HEAD/tree/dosbox/tags/RELEASE_0_74_3/src/dos/dos_execute.cpp#l46
+        // https://sourceforge.net/p/freedos/svn/HEAD/tree/kernel/tags/ke2042/kernel/task.c#l555
+        read_u16le(input)?;
+        let e_ip = read_u16le(input)?;
+        let e_cs = read_u16le(input)?;
+        let relocs_offset = {
+            let e_lfarlc = read_u16le(input)?;
+            e_lfarlc as u64
+        };
+        let e_ovno = read_u16le(input)?;
+
+        // We have now read HEADER_LEN bytes.
+        let mut pos: u64 = HEADER_LEN;
+
+        // Read the relocation table.
+        let relocs = if num_relocs > 0 {
+            // Discard bytes up to the beginning of the relocation table.
+            pos += discard(input, relocs_offset.checked_sub(pos)
+                .ok_or(Error::Format(FormatError::RelocationsOverlapHeader(relocs_offset)))?
+            ).map_err(|err| annotate_io_error(err, "reading to beginning of relocation table"))?;
+            assert_eq!(pos, relocs_offset);
+            // Read the relocation table itself.
+            read_relocs(input, num_relocs)
+                .map_err(|err| annotate_io_error(err, "reading EXE relocation table"))?
+        } else {
+            Vec::new()
+        };
+        debug!("{:?}", relocs);
+        pos += relocs.len() as u64 * 4;
+
+        // Discard bytes up to the end of the header.
+        pos += discard(input, header_len.checked_sub(pos)
+            .ok_or(Error::Format(FormatError::HeaderTooShort(header_len)))?
+        ).map_err(|err| annotate_io_error(err, "reading to end of header"))?;
+
+        // Read the EXE body.
+        let body = {
+            let body_len = exe_len.checked_sub(pos)
+                .ok_or(Error::Format(FormatError::TooShort(exe_len, header_len)))?;
+            let mut body = vec![0; body_len.try_into().unwrap()];
+            input.read_exact(&mut body)
+                .map_err(|err| annotate_io_error(err, "reading EXE body"))?;
+            pos += body_len;
+            body
+        };
+
+        if let Some(file_len_hint) = file_len_hint {
+            // The EXE file length is allowed to be smaller than the length of the
+            // file containing it. Emit a warning that we are ignoring trailing
+            // garbage.
+            if pos < file_len_hint {
+                eprintln!("warning: EXE file size is {}; ignoring {} trailing bytes", exe_len, file_len_hint - pos);
+            }
+        }
+
+        Ok(Self {
+            e_minalloc: e_minalloc,
+            e_maxalloc: e_maxalloc,
+            e_ss: e_ss,
+            e_sp: e_sp,
+            e_ip: e_ip,
+            e_cs: e_cs,
+            e_ovno: e_ovno,
+            relocs,
+            body,
+        })
+    }
+
+    fn write_header<W: Write + ?Sized>(&self, w: &mut W) -> Result<u64, Error> {
         // http://www.delorie.com/djgpp/doc/exe/: "Note that some OSs and/or
         // programs may fail if the header is not a multiple of 512 bytes."
         let num_header_pages = ((HEADER_LEN as usize + 4 * self.relocs.len()) + 511) / 512;
@@ -93,72 +200,40 @@ impl Exe {
             .ok_or(FormatError::TooLong(num_header_pages * 512 + self.body.len()))?;
         let e_crlc = self.relocs.len().try_into()
             .or(Err(FormatError::TooManyRelocations(self.relocs.len())))?;
-        Ok(Header {
-            e_magic: MAGIC,
-            e_cblp: e_cblp,
-            e_cp: e_cp,
-            e_crlc: e_crlc,
-            e_cparhdr: (num_header_pages * 512 / 16) as u16,
-            e_minalloc: self.e_minalloc,
-            e_maxalloc: self.e_maxalloc,
-            e_ss: self.e_ss,
-            e_sp: self.e_sp,
-            e_csum: 0,
-            e_ip: self.e_ip,
-            e_cs: self.e_cs,
-            e_lfarlc: HEADER_LEN as u16,
-            e_ovno: self.e_ovno,
-        })
-    }
+        let e_cparhdr: u16 = (num_header_pages * 512 / 16).try_into()
+            .or(Err(FormatError::HeaderTooLong(num_header_pages * 512)))?;
+        let mut n = 0;
+        n += write_u16le(w, MAGIC)?;
+        n += write_u16le(w, e_cblp)?;
+        n += write_u16le(w, e_cp)?;
+        n += write_u16le(w, e_crlc)?;
+        n += write_u16le(w, e_cparhdr)?;
+        n += write_u16le(w, self.e_minalloc)?;
+        n += write_u16le(w, self.e_maxalloc)?;
+        n += write_u16le(w, self.e_ss)?;
+        n += write_u16le(w, self.e_sp)?;
+        n += write_u16le(w, 0)?; // e_csum
+        n += write_u16le(w, self.e_ip)?;
+        n += write_u16le(w, self.e_cs)?;
+        n += write_u16le(w, HEADER_LEN as u16)?;
+        n += write_u16le(w, self.e_ovno)?;
+        assert_eq!(n as u64, HEADER_LEN);
 
-    /// Reads an EXE file into an `Exe` structure.
-    ///
-    /// `file_len_hint` is an optional externally provided hint of
-    /// the input file's total length, which we use to emit a warning when it
-    /// exceeds the length stated in the EXE header.
-    pub fn read<R: Read + ?Sized>(input: &mut R, file_len_hint: Option<u64>) -> Result<Self, Error> {
-        let (header, relocs) = read_and_check_exe_header(input)?;
-        debug!("{:?}", relocs);
+        n += write_relocs(w, &self.relocs)
+            .map_err(|err| annotate_io_error(err, "writing EXE relocations"))? as u64;
 
-        // Now we are positioned just after the EXE header. Trim any data that lies
-        // beyond the length of the EXE file stated in the header.
-        let input = &mut trim_input_from_header(input, &header, file_len_hint);
+        assert!(n <= e_cparhdr as u64 * 16);
+        n += io::copy(&mut io::repeat(0).take(e_cparhdr as u64 * 16 - n), w)
+            .map_err(|err| annotate_io_error(err, "writing EXE header padding"))? as u64;
 
-        // The trim_input_from_header above ensures that we will read no more than
-        // 0xffff*512 bytes < 32 MB here.
-        let mut body = vec![0; header.exe_len().checked_sub(header.header_len()).unwrap() as usize];
-        input.read_exact(&mut body)
-            .map_err(|err| annotate_io_error(err, "reading EXE body"))?;
-
-        Ok(Self {
-            e_minalloc: header.e_minalloc,
-            e_maxalloc: header.e_maxalloc,
-            e_ss: header.e_ss,
-            e_sp: header.e_sp,
-            e_ip: header.e_ip,
-            e_cs: header.e_cs,
-            e_ovno: header.e_ovno,
-            body,
-            relocs,
-        })
+        Ok(n as u64)
     }
 
     /// Serializes the `Exe` structure to `w`. Returns the number of bytes
     /// written.
     pub fn write<W: Write + ?Sized>(&self, w: &mut W) -> Result<u64, Error> {
-        let header = self.make_header()?;
-        debug!("{:?}", header);
         let mut n: u64 = 0;
-        n += header.write(w)
-            .map_err(|err| annotate_io_error(err, "writing EXE header"))? as u64;
-        n += write_exe_relocations(w, &self.relocs)
-            .map_err(|err| annotate_io_error(err, "writing EXE relocations"))? as u64;
-        assert!(n <= header.header_len());
-        while n < header.header_len() {
-            let zeroes = [0; 16];
-            n += w.write(&zeroes[0..cmp::min((header.header_len() - n) as usize, zeroes.len())])
-                .map_err(|err| annotate_io_error(err, "writing EXE header padding"))? as u64;
-        }
+        n += self.write_header(w)? as u64;
         w.write_all(&self.body)
             .map_err(|err| annotate_io_error(err, "writing EXE body"))?;
         n += self.body.len() as u64;
@@ -166,12 +241,12 @@ impl Exe {
     }
 }
 
-fn write_u16le<W: Write + ?Sized>(w: &mut W, v: u16) -> io::Result<usize> {
+fn write_u16le<W: Write + ?Sized>(w: &mut W, v: u16) -> io::Result<u64> {
     let buf = &u16::to_le_bytes(v);
-    w.write_all(&u16::to_le_bytes(v)).and(Ok(buf.len()))
+    w.write_all(&u16::to_le_bytes(v)).and(Ok(buf.len() as u64))
 }
 
-fn write_exe_relocations<W: Write + ?Sized>(w: &mut W, relocs: &[Pointer]) -> io::Result<usize> {
+fn write_relocs<W: Write + ?Sized>(w: &mut W, relocs: &[Pointer]) -> io::Result<u64> {
     let mut n = 0;
     for pointer in relocs.iter() {
         n += write_u16le(w, pointer.offset)?;
@@ -180,86 +255,12 @@ fn write_exe_relocations<W: Write + ?Sized>(w: &mut W, relocs: &[Pointer]) -> io
     Ok(n)
 }
 
-/// A DOS EXE header. See <http://www.delorie.com/djgpp/doc/exe/>.
-/// The field names are taken from `IMAGE_DOS_HEADER` from \<winnt.h\>.
-#[derive(Debug)]
-pub struct Header {
-    pub e_magic: u16,
-    pub e_cblp: u16,
-    pub e_cp: u16,
-    pub e_crlc: u16,
-    pub e_cparhdr: u16,
-    pub e_minalloc: u16,
-    pub e_maxalloc: u16,
-    pub e_ss: u16,
-    pub e_sp: u16,
-    pub e_csum: u16,
-    pub e_ip: u16,
-    pub e_cs: u16,
-    pub e_lfarlc: u16,
-    pub e_ovno: u16,
+/// Reads and discards `n` bytes.
+fn discard<R: Read + ?Sized>(r: &mut R, n: u64) -> io::Result<u64> {
+    io::copy(&mut r.take(n), &mut io::sink())
 }
 
-impl Header {
-    pub fn exe_len(&self) -> u64 {
-        if self.e_cp == 0 && self.e_cblp == 0 {
-            return 0;
-        }
-        if self.e_cp == 0 || self.e_cblp >= 512 {
-            panic!("nonsense exe len e_cp={} e_cblp={}", self.e_cp, self.e_cblp);
-        }
-        (self.e_cp - 1) as u64 * 512
-            + if self.e_cblp == 0 { 512 } else { self.e_cblp } as u64
-    }
-
-    pub fn header_len(&self) -> u64 {
-        self.e_cparhdr as u64 * 16
-    }
-
-    /// Reads an EXE header (only the fixed-length fields, not the relocations
-    /// or padding) into an `Header` structure.
-    pub fn read<R: Read + ?Sized>(r: &mut R) -> io::Result<Self> {
-        Ok(Self {
-            e_magic: read_u16le(r)?,
-            e_cblp: read_u16le(r)?,
-            e_cp: read_u16le(r)?,
-            e_crlc: read_u16le(r)?,
-            e_cparhdr: read_u16le(r)?,
-            e_minalloc: read_u16le(r)?,
-            e_maxalloc: read_u16le(r)?,
-            e_ss: read_u16le(r)?,
-            e_sp: read_u16le(r)?,
-            e_csum: read_u16le(r)?,
-            e_ip: read_u16le(r)?,
-            e_cs: read_u16le(r)?,
-            e_lfarlc: read_u16le(r)?,
-            e_ovno: read_u16le(r)?,
-        })
-    }
-
-    /// Serializes the `Header` structure to `w`. Returns the number of bytes
-    /// written.
-    pub fn write<W: Write + ?Sized>(&self, w: &mut W) -> io::Result<usize> {
-        let mut n = 0;
-        n += write_u16le(w, self.e_magic)?;
-        n += write_u16le(w, self.e_cblp)?;
-        n += write_u16le(w, self.e_cp)?;
-        n += write_u16le(w, self.e_crlc)?;
-        n += write_u16le(w, self.e_cparhdr)?;
-        n += write_u16le(w, self.e_minalloc)?;
-        n += write_u16le(w, self.e_maxalloc)?;
-        n += write_u16le(w, self.e_ss)?;
-        n += write_u16le(w, self.e_sp)?;
-        n += write_u16le(w, self.e_csum)?;
-        n += write_u16le(w, self.e_ip)?;
-        n += write_u16le(w, self.e_cs)?;
-        n += write_u16le(w, self.e_lfarlc)?;
-        n += write_u16le(w, self.e_ovno)?;
-        Ok(n)
-    }
-}
-
-fn read_exe_relocs<R: Read + ?Sized>(r: &mut R, num_relocs: usize) -> io::Result<Vec<Pointer>> {
+fn read_relocs<R: Read + ?Sized>(r: &mut R, num_relocs: usize) -> io::Result<Vec<Pointer>> {
     let mut relocs = Vec::with_capacity(num_relocs);
     for _ in 0..num_relocs {
         relocs.push(Pointer {
@@ -268,84 +269,6 @@ fn read_exe_relocs<R: Read + ?Sized>(r: &mut R, num_relocs: usize) -> io::Result
         });
     }
     Ok(relocs)
-}
-
-/// Reads and discards `n` bytes.
-fn discard<R: Read + ?Sized>(r: &mut R, n: u64) -> io::Result<()> {
-    io::copy(&mut r.take(n), &mut io::sink()).and(Ok(()))
-}
-
-/// Read an EXE header (including relocations and padding) and do consistency
-/// checks on it. Reads exactly `header.header_len()` bytes from `r`. Doesn't
-/// support relocation entries stored outside the header.
-pub fn read_and_check_exe_header<R: Read + ?Sized>(r: &mut R) -> Result<(Header, Vec<Pointer>), Error> {
-    let header = Header::read(r)
-        .map_err(|err| annotate_io_error(err, "reading EXE header"))?;
-    debug!("{:?}", header);
-
-    // Begin consistency tests on the fields of the EXE header.
-    if header.e_magic != MAGIC {
-        return Err(From::from(FormatError::BadMagic(header.e_magic)));
-    }
-
-    // Consistency of e_cparhdr. We need the stated header length to be at least
-    // as large as the header we just read.
-    if header.header_len() < HEADER_LEN {
-        return Err(From::from(FormatError::HeaderTooShort(header.e_cparhdr)));
-    }
-
-    // Consistency of e_cp and e_cblp.
-    if (header.e_cp == 0 && header.e_cblp != 0) || header.e_cblp >= 512 {
-        return Err(From::from(FormatError::BadNumPages(header.e_cp, header.e_cblp)));
-    }
-    if header.exe_len() < header.header_len() {
-        return Err(From::from(FormatError::BadNumPages(header.e_cp, header.e_cblp)));
-    }
-
-    // Consistency of e_lfarlc and e_crlc.
-    let relocations_start = header.e_lfarlc as u64;
-    let relocations_end = relocations_start + header.e_crlc as u64 * 4;
-
-    let relocs = if header.e_crlc > 0 {
-        // Discard up to the beginning of relocations.
-        discard(r, relocations_start.checked_sub(HEADER_LEN)
-            .ok_or(FormatError::RelocationsOutsideHeader(header.e_crlc, header.e_lfarlc))?
-        ).map_err(|err| annotate_io_error(err, "reading to beginning of relocation table"))?;
-        // Read relocations.
-        let mut relocs = read_exe_relocs(r, header.e_crlc as usize)
-            .map_err(|err| annotate_io_error(err, "reading EXE relocation table"))?;
-        // Discard any remaining header padding.
-        discard(r, header.header_len().checked_sub(relocations_end)
-            .ok_or(FormatError::RelocationsOutsideHeader(header.e_crlc, header.e_lfarlc))?
-        ).map_err(|err| annotate_io_error(err, "reading to end of header"))?;
-        relocs
-    } else {
-        discard(r, header.header_len().checked_sub(HEADER_LEN).unwrap())
-            .map_err(|err| annotate_io_error(err, "reading to end of header"))?;
-        Vec::new()
-    };
-
-    Ok((header, relocs))
-}
-
-/// The EXE header contains a limit to the overall length of the EXE file in the
-/// `e_cblp` and `e_cp` fields. This function trims an `io::Read` to limit it to
-/// the length specified in the header, assuming that the header (including
-/// relocations and padding) has already been read. `file_len_hint` is an
-/// optional externally provided hint of the input file's total length, which we
-/// use to emit a warning when it exceeds the length stated in the EXE header.
-/// Panics if the EXE length is less than the header length (which cannot happen
-/// if the header was returned from `read_and_check_exe_header`).
-pub fn trim_input_from_header<R: Read>(input: R, header: &Header, file_len_hint: Option<u64>) -> io::Take<R> {
-    if let Some(file_len) = file_len_hint {
-        // The EXE file length is allowed to be smaller than the length of the
-        // file containing it. Emit a warning that we are ignoring trailing
-        // garbage.
-        if header.exe_len() < file_len {
-            eprintln!("warning: EXE file size is {}; ignoring {} trailing bytes", header.exe_len(), file_len - header.exe_len());
-        }
-    }
-    input.take(header.exe_len().checked_sub(header.header_len()).unwrap())
 }
 
 /// Returns a tuple `(e_cblp, e_cp)` that encodes `len` as appropriate for the
@@ -368,5 +291,36 @@ fn test_encode_exe_len() {
     assert_eq!(encode_exe_len(513), Some((1, 2)));
     assert_eq!(encode_exe_len(512 * 0xffff - 1), Some((511, 0xffff)));
     assert_eq!(encode_exe_len(512 * 0xffff), Some((0, 0xffff)));
+
     assert_eq!(encode_exe_len(512 * 0xffff + 1), None);
+}
+
+/// Converts a `(e_cblp, e_cp)` tuple into a single length value. Returns `None`
+/// if the inputs are an invalid encoding (encode a negative length, or have
+/// `e_cblp` > 511).
+fn decode_exe_len(e_cblp: u16, e_cp: u16) -> Option<u64> {
+    match (e_cblp, e_cp) {
+        (0, _) => Some(e_cp as u64 * 512),
+        (_, 0) => None, // Encodes a negative length.
+        (1..=511, _) => Some((e_cp - 1) as u64 * 512 + e_cblp as u64),
+        _ => None, // e_cblp > 511.
+    }
+}
+
+#[test]
+fn test_decode_exe_len() {
+    assert_eq!(decode_exe_len(0, 0), Some(0));
+    assert_eq!(decode_exe_len(1, 1), Some(1));
+    assert_eq!(decode_exe_len(511, 1), Some(511));
+    assert_eq!(decode_exe_len(0, 1), Some(512));
+    assert_eq!(decode_exe_len(1, 2), Some(513));
+    assert_eq!(decode_exe_len(511, 0xffff), Some(0xffff*512-1));
+    assert_eq!(decode_exe_len(0, 0xffff), Some(0xffff*512));
+
+    // When e_cp == 0, e_cblp must be 0, otherwise it would encode a negative
+    // length.
+    assert_eq!(decode_exe_len(1, 0), None);
+    assert_eq!(decode_exe_len(511, 0), None);
+    // e_cblp must be <= 511.
+    assert_eq!(decode_exe_len(512, 1), None);
 }

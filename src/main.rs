@@ -61,7 +61,8 @@ fn pack_file<P: AsRef<Path>>(path: P) -> Result<exe::Exe, exepack::Error> {
     let f = File::open(&path)?;
     let file_len = f.metadata()?.len();
     let mut f = io::BufReader::new(f);
-    exepack::pack(&mut f, Some(file_len))
+    let exe = exe::Exe::read(&mut f, Some(file_len))?;
+    exepack::pack(&exe)
 }
 
 fn compress_mode<P: AsRef<Path>>(input_path: P, output_path: P) -> Result<(), TopLevelError> {
@@ -87,7 +88,8 @@ fn unpack_file<P: AsRef<Path>>(path: P) -> Result<exe::Exe, exepack::Error> {
     let f = File::open(&path)?;
     let file_len = f.metadata()?.len();
     let mut f = io::BufReader::new(f);
-    exepack::unpack(&mut f, Some(file_len))
+    let exe = exe::Exe::read(&mut f, Some(file_len))?;
+    exepack::unpack(&exe).or_else(|err| Err(From::from(err)))
 }
 
 fn decompress_mode<P: AsRef<Path>>(input_path: P, output_path: P) -> Result<(), TopLevelError> {

@@ -13,13 +13,13 @@
 //!
 //! # Compression
 //!
-//! The `pack` function takes an `io::Read` and outputs a compressed `exe::Exe`
-//! struct.
+//! The `pack` function takes an uncompressed `exe::Exe` and outputs a
+//! compressed `exe::Exe`.
 //!
 //! # Decompression
 //!
-//! The `unpack` function takes an `io::Read` and outputs a decompressed
-//! `exe::Exe` struct.
+//! The `unpack` function takes a compressed `exe::Exe` and outputs an
+//! uncompressed `exe::Exe`.
 //!
 //! # Inconsistencies
 //!
@@ -119,18 +119,19 @@ impl fmt::Display for Error {
 
 #[derive(Debug, PartialEq)]
 pub enum ExepackFormatError {
+    RelocationsNotSupported,
+    HeaderPastEndOfFile(u64),
     UnknownStub(Vec<u8>, Vec<u8>),
     BadMagic(u16),
     UnknownHeaderLength(usize),
     SkipTooShort(u16),
     SkipTooLong(u16),
-    ExepackTooShort(u16, usize),
+    ExepackTooShort(u16),
     SrcOverflow(),
     FillOverflow(usize, usize, u8, usize, u8),
     CopyOverflow(usize, usize, u8, usize),
     BogusCommand(usize, u8, usize),
     Gap(usize, usize),
-    RelocationsNotSupported(u16, u16),
     UncompressedTooLong(usize),
     RelocationAddrTooLarge(Pointer),
     ExepackTooLong(usize),
@@ -141,6 +142,10 @@ pub enum ExepackFormatError {
 impl fmt::Display for ExepackFormatError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
+            &ExepackFormatError::RelocationsNotSupported =>
+                write!(f, "relocations before decompression are not supported"),
+            &ExepackFormatError::HeaderPastEndOfFile(offset) =>
+                write!(f, "EXEPACK header at 0x{:x} is past the end of the file", offset),
             &ExepackFormatError::UnknownStub(ref _header_buffer, ref _stub) =>
                 write!(f, "Unknown decompression stub"),
             &ExepackFormatError::BadMagic(magic) =>
@@ -151,8 +156,8 @@ impl fmt::Display for ExepackFormatError {
                 write!(f, "EXEPACK skip_len of {} paragraphs is invalid", skip_len),
             &ExepackFormatError::SkipTooLong(skip_len) =>
                 write!(f, "EXEPACK skip_len of {} paragraphs is too long", skip_len),
-            &ExepackFormatError::ExepackTooShort(exepack_size, header_and_stub_len) =>
-                write!(f, "EXEPACK size of {} bytes is too short for header and stub of {} bytes", exepack_size, header_and_stub_len),
+            &ExepackFormatError::ExepackTooShort(exepack_size) =>
+                write!(f, "EXEPACK size of {} bytes is too short for header, stub, and relocations", exepack_size),
             &ExepackFormatError::SrcOverflow() =>
                 write!(f, "reached end of compressed stream without seeing a termination command"),
             &ExepackFormatError::FillOverflow(dst, _src, _command, length, fill) =>
@@ -165,8 +170,6 @@ impl fmt::Display for ExepackFormatError {
                 write!(f, "unknown command 0x{:02x} with ostensible length {} at index {}", command, length, src),
             &ExepackFormatError::Gap(dst, original_src) =>
                 write!(f, "decompression left a gap of {} unwritten bytes between write index {} and original read index {}", dst - original_src, dst, original_src),
-            &ExepackFormatError::RelocationsNotSupported(_e_crlc, _e_lfarlc) =>
-                write!(f, "relocations before decompression are not supported"),
             &ExepackFormatError::UncompressedTooLong(len) =>
                 write!(f, "uncompressed size {} is too large to represent in an EXEPACK header", len),
             &ExepackFormatError::RelocationAddrTooLarge(ref pointer) =>
@@ -453,13 +456,8 @@ fn encode_relocs(buf: &mut Vec<u8>, relocs: &[Pointer]) -> Result<(), Error> {
 }
 
 /// Pack an input executable and return the elements of the packed executable.
-/// `file_len_hint` is an optional externally provided hint of the input file's
-/// total length, which we use to emit a warning when it exceeds the length
-/// stated in the EXE header.
-pub fn pack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<exe::Exe, Error> {
-    let exe = exe::Exe::read(input, file_len_hint)?;
-
-    let mut uncompressed = exe.body;
+pub fn pack(exe: &exe::Exe) -> Result<exe::Exe, Error> {
+    let mut uncompressed = exe.body.clone();
     // Pad uncompressed to a multiple of 16 bytes.
     {
         let len = round_up(uncompressed.len(), 16).unwrap();
@@ -640,26 +638,30 @@ struct ExepackHeader {
     signature: u16,
 }
 
-fn parse_exepack_header(buf: &[u8]) -> Result<ExepackHeader, ExepackFormatError> {
+fn parse_exepack_header(mut buf: &[u8]) -> Result<ExepackHeader, ExepackFormatError> {
     let uses_skip_len = match buf.len() {
         16 => false,
         18 => true,
-        _ => return Err(From::from(ExepackFormatError::UnknownHeaderLength(buf.len()))),
+        _ => return Err(ExepackFormatError::UnknownHeaderLength(buf.len())),
     };
-    let r = &mut io::Cursor::new(buf);
-    let real_ip = read_u16le(r).unwrap();
-    let real_cs = read_u16le(r).unwrap();
-    let _ = read_u16le(r).unwrap(); // Ignore "mem_start".
-    let exepack_size = read_u16le(r).unwrap();
-    let real_sp = read_u16le(r).unwrap();
-    let real_ss = read_u16le(r).unwrap();
-    let dest_len = read_u16le(r).unwrap();
+
+    let real_ip = read_u16le(&mut buf).unwrap();
+    let real_cs = read_u16le(&mut buf).unwrap();
+    read_u16le(&mut buf).unwrap(); // Ignore "mem_start".
+    let exepack_size = read_u16le(&mut buf).unwrap();
+    let real_sp = read_u16le(&mut buf).unwrap();
+    let real_ss = read_u16le(&mut buf).unwrap();
+    let dest_len = read_u16le(&mut buf).unwrap();
     let skip_len = if uses_skip_len {
-        read_u16le(r).unwrap()
+        read_u16le(&mut buf).unwrap()
     } else {
         1
     };
-    let signature = read_u16le(r).unwrap();
+    let signature = read_u16le(&mut buf).unwrap();
+    if signature != EXEPACK_MAGIC {
+        return Err(ExepackFormatError::BadMagic(signature));
+    }
+
     Ok(ExepackHeader {
         real_ip,
         real_cs,
@@ -684,116 +686,115 @@ fn encode_exepack_header(buf: &mut Vec<u8>, header: &ExepackHeader) {
     push_u16le(buf, header.signature);
 }
 
-/// Read a decompression stub (the executable code following the EXEPACK header
-/// and preceding the packed relocation table). Returns (stub, true) if it finds
-/// a match, or (partial, false) if it reads 512 bytes without a match.
+/// Finds the end of a decompression stub (the executable code following the
+/// EXEPACK header and preceding the packed relocation table). Returns
+/// `Some(offset)` if the end of the stub was found; `None` otherwise.
 ///
-/// There are many different decompression stubs--see some examples in the doc
+/// There are many different decompression stubs. See some examples in the doc
 /// directory. What they all have in common is a suffix of
-/// `"\xcd\x21\xb8\xff\x4c\xcd\x21"`--standing for the instructions
-/// `int 0x21; mov ax, 0x4cff; int 0x21`--followed by a 22-byte error string,
-/// most often `"Packed file is corrupt"`.
-fn read_stub<R: Read>(r: &mut R) -> io::Result<(Vec<u8>, bool)> {
+/// `b"\xcd\x21\xb8\xff\x4c\xcd\x21"` (standing for the instructions
+/// `int 0x21; mov ax, 0x4cff; int 0x21`), followed by a 22-byte error string,
+/// most often `b"Packed file is corrupt"`.
+fn locate_end_of_stub(stub: &[u8]) -> Option<usize> {
     const SUFFIX: &'static [u8] = b"\xcd\x21\xb8\xff\x4c\xcd\x21";
-    let mut buf = Vec::new();
-    while buf.len() < 512 {
-        {
-            let len = buf.len();
-            buf.push(0);
-            let n = r.read(&mut buf[len..])?;
-            if n == 0 {
-                break;
-            }
-            buf.resize(len + n, 0);
-        }
-        if buf.ends_with(SUFFIX) {
-            {
-                let len = buf.len();
-                buf.resize(len + 22, 0);
-                r.read_exact(&mut buf[len..])?;
-                return Ok((buf, true));
-            }
+    for (i, window) in stub.windows(SUFFIX.len()).enumerate() {
+        if window == SUFFIX {
+            return Some(i + SUFFIX.len() + 22);
         }
     }
-    Ok((buf, false))
+    None
 }
 
 // http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK#Relocation_Table
-fn read_exepack_relocs<R: Read>(r: &mut R) -> io::Result<Vec<Pointer>> {
+fn parse_exepack_relocs(buf: &[u8]) -> Option<(usize, Vec<Pointer>)> {
     let mut relocs = Vec::new();
-    for i in 0..16 {
-        let num_relocs = read_u16le(r)?;
+    let mut i = 0;
+    for segment in 0..16 {
+        if i + 2 > buf.len() {
+            return None;
+        }
+        let num_relocs = u16::from_le_bytes(buf[i..i+2].try_into().unwrap());
+        i += 2;
         for _ in 0..num_relocs {
-            let offset = read_u16le(r)?;
+            if i + 2 > buf.len() {
+                return None;
+            }
+            let offset = u16::from_le_bytes(buf[i..i+2].try_into().unwrap());
+            i += 2;
             relocs.push(Pointer {
-                segment: i * 0x1000,
+                segment: segment * 0x1000,
                 offset: offset,
             });
         }
     }
-    Ok(relocs)
+    Some((i, relocs))
 }
 
 /// Unpack an input executable and return the elements of an unpacked executable.
-/// `file_len_hint` is an optional externally provided hint of the file's total
-/// length, which we use to emit a warning when it exceeds the length stated in
-/// the EXE header.
-pub fn unpack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<exe::Exe, Error> {
-    let (exe_header, relocs) = exe::read_and_check_exe_header(input)?;
-    debug!("{:?}", relocs);
-    if relocs.len() > 0 {
-        return Err(Error::Exepack(ExepackFormatError::RelocationsNotSupported(exe_header.e_crlc, exe_header.e_lfarlc)));
+pub fn unpack(exe: &exe::Exe) -> Result<exe::Exe, ExepackFormatError> {
+    if !exe.relocs.is_empty() {
+        return Err(ExepackFormatError::RelocationsNotSupported);
     }
-
-    // Now we are positioned just after the EXE header. Trim any data that lies
-    // beyond the length of the EXE file stated in the header.
-    let input = &mut exe::trim_input_from_header(input, &exe_header, file_len_hint);
 
     // Compressed data starts immediately after the EXE header and ends at
-    // cs:0000. We will decompress into the very same buffer (after enlarging it
-    // as necessary).
-    let mut work_buffer = vec![0; exe_header.e_cs as usize * 16];
-    input.read_exact(&mut work_buffer)
-        .map_err(|err| annotate_io_error(err, "reading compressed data"))?;
+    // cs:0000.
+    let mut work_buffer = exe.body.clone();
 
     // The EXEPACK header starts at cs:0000 and ends at cs:ip.
-    let mut exepack_header_buf = vec![0; exe_header.e_ip as usize];
-    input.read_exact(&mut exepack_header_buf)
-        .map_err(|err| annotate_io_error(err, "reading EXEPACK header"))?;
-    let exepack_header = parse_exepack_header(&exepack_header_buf)?;
-    if exepack_header.signature != EXEPACK_MAGIC {
-        return Err(Error::Exepack(ExepackFormatError::BadMagic(exepack_header.signature)));
+    let exepack_header_offset = exe.e_cs as usize * 16;
+    if exepack_header_offset > work_buffer.len() {
+        return Err(ExepackFormatError::HeaderPastEndOfFile(exepack_header_offset as u64));
     }
-    debug!("{:?}", exepack_header);
+    let mut exepack_header_buf = work_buffer.split_off(exepack_header_offset);
 
     // The decompression stub starts at cs:ip.
-    let (stub, found) = read_stub(input)
-        .map_err(|err| annotate_io_error(err, "reading EXEPACK decompression stub"))?;
-    if !found {
-        return Err(Error::Exepack(ExepackFormatError::UnknownStub(exepack_header_buf, stub)));
+    let exepack_header_len = exe.e_ip as usize;
+    if exepack_header_len > exepack_header_buf.len() {
+        return Err(ExepackFormatError::HeaderPastEndOfFile(exepack_header_offset as u64));
     }
-    debug!("found stub of length {}", stub.len());
+    let mut stub = exepack_header_buf.split_off(exepack_header_len);
+
+    let exepack_header = parse_exepack_header(&exepack_header_buf)?;
+    debug!("{:?}", exepack_header);
 
     // The EXEPACK header's exepack_size field contains the length of the
     // EXEPACK header, the decompression stub, and the relocation table all
     // together. The decompression stub uses this value to control how much of
     // itself to copy out of the way before starting the main compression loop.
-    // Therefore we are justified in raising an error if any reads go past
-    // exepack_size.
-    let input = &mut {
-        let read_so_far = exepack_header_buf.len() + stub.len();
-        if (exepack_header.exepack_size as usize) < read_so_far {
-            // exepack_size is smaller than what we've already read.
-            return Err(Error::Exepack(ExepackFormatError::ExepackTooShort(exepack_header.exepack_size, read_so_far)));
+    // Truncate what remains of the buffer to exepack_size, taking into account
+    // that we have already read exepack_header_buf.
+    stub.truncate((exepack_header.exepack_size as usize).checked_sub(exepack_header_buf.len())
+        .ok_or(ExepackFormatError::ExepackTooShort(exepack_header.exepack_size))?
+    );
+
+    // The decompression stub ends at a point determined by pattern matching.
+    // The packed relocation table follows immediately after.
+    let stub_len = locate_end_of_stub(&stub)
+        .ok_or(ExepackFormatError::UnknownStub(exepack_header_buf.clone(), stub.clone()))?;
+    debug!("found stub of length {}", stub_len);
+    let relocs_buf = stub.split_off(stub_len);
+
+    // Parse the packed relocation table.
+    let relocs = {
+        let (i, relocs) = parse_exepack_relocs(&relocs_buf)
+            .ok_or(ExepackFormatError::ExepackTooShort(exepack_header.exepack_size))?;
+        debug!("{:?}", relocs);
+        // If there is any trailing data here, it means that exepack_size was
+        // too big compared to our reckoning of where the packed relocation
+        // table started; in other words it's possible that read_stub didn't
+        // find the end of the stub correctly. Report this as an UnknownStub
+        // error.
+        if i != relocs_buf.len() {
+            return Err(ExepackFormatError::UnknownStub(exepack_header_buf.clone(), stub.clone()));
         }
-        input.take((exepack_header.exepack_size as usize - read_so_far) as u64)
+        relocs
     };
 
     // The skip_len variable is 1 greater than the number of paragraphs of
     // padding between the compressed data and the EXEPACK header. It cannot be
     // 0 because that would mean −1 paragraphs of padding.
     let skip_len = 16 * (exepack_header.skip_len as usize).checked_sub(1)
-        .ok_or(Error::Exepack(ExepackFormatError::SkipTooShort(exepack_header.skip_len)))?;
+        .ok_or(ExepackFormatError::SkipTooShort(exepack_header.skip_len))?;
     // It's weird that skip_len applies to both the compressed and uncompressed
     // lengths, but it does. Which seems to make skip_len pointless. If skip_len
     // applied only to the uncompressed length, it could be useful for
@@ -804,9 +805,9 @@ pub fn unpack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<exe:
     // STUB has extra logic to handle that case, but the Microsoft stubs do
     // not.)
     let compressed_len = work_buffer.len().checked_sub(skip_len)
-        .ok_or(Error::Exepack(ExepackFormatError::SkipTooLong(exepack_header.skip_len)))?;
+        .ok_or(ExepackFormatError::SkipTooLong(exepack_header.skip_len))?;
     let uncompressed_len = (exepack_header.dest_len as usize * 16).checked_sub(skip_len)
-        .ok_or(Error::Exepack(ExepackFormatError::SkipTooLong(exepack_header.skip_len)))?;
+        .ok_or(ExepackFormatError::SkipTooLong(exepack_header.skip_len))?;
     // Expand the buffer, if needed, to hold the uncompressed data.
     work_buffer.resize(cmp::max(compressed_len, uncompressed_len), 0);
     // Remove 0xff padding.
@@ -816,32 +817,15 @@ pub fn unpack<R: Read>(input: &mut R, file_len_hint: Option<u64>) -> Result<exe:
     // Decompression might have shrunk the input; trim the buffer if so.
     work_buffer.resize(uncompressed_len, 0);
 
-    // The last step is to parse the relocation table that follows the
-    // decompression stub.
-    let relocs = read_exepack_relocs(input)
-        .map_err(|err| annotate_io_error(err, "reading EXEPACK relocation table"))?;
-    debug!("{:?}", relocs);
-
-    // If there is any trailing data here, it means that exepack_size was too
-    // big compared to our reckoning of where the packed relocation table
-    // started; in other words it's possible that read_stub didn't find the
-    // end of the stub correctly. Report this as an UnknownStub error.
-    {
-        let mut b = [0; 1];
-        if let Ok(_) = input.read_exact(&mut b) {
-            return Err(Error::Exepack(ExepackFormatError::UnknownStub(exepack_header_buf, stub)));
-        }
-    }
-
     // Finally, construct a new EXE.
     Ok(exe::Exe {
-        e_minalloc: exe_header.e_minalloc,
-        e_maxalloc: exe_header.e_maxalloc,
+        e_minalloc: exe.e_minalloc,
+        e_maxalloc: exe.e_maxalloc,
         e_ss: exepack_header.real_ss,
         e_sp: exepack_header.real_sp,
         e_ip: exepack_header.real_ip,
         e_cs: exepack_header.real_cs,
-        e_ovno: exe_header.e_ovno,
+        e_ovno: exe.e_ovno,
         body: work_buffer,
         relocs,
     })
