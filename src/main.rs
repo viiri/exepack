@@ -237,7 +237,7 @@ fn main() {
         compress_mode(&input_path, &output_path)
     } {
         match err.kind {
-            exepack::Error::Exepack(exepack::ExepackFormatError::UnknownStub(ref exepack_header_buffer, ref stub)) => {
+            exepack::Error::Exepack(exepack::FormatError::UnknownStub(ref exepack_header_buffer, ref stub)) => {
                 // UnknownStub gets special treatment. We search for "Packed
                 // file is corrupt" and display the stub if it is found, or warn
                 // that the input may not be EXEPACK if it is not.
