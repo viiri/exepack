@@ -61,14 +61,6 @@ fn push_u16le(buf: &mut Vec<u8>, v: u16) {
     buf.push((v >> 8) as u8);
 }
 
-fn checked_u16(n: usize) -> Option<u16> {
-    if n > 0xffff {
-        None
-    } else {
-        Some(n as u16)
-    }
-}
-
 #[derive(Debug)]
 pub enum Error {
     Io(io::Error),
@@ -430,10 +422,10 @@ fn encode_relocs(buf: &mut Vec<u8>, relocs: &[exe::Pointer]) -> Result<(), Error
         while j < relocs.len() && relocs[j].abs() >> 16 == segment_index {
             j += 1;
         }
-        // The checked_u16 cannot fail; for that to happen, the input EXE must
+        // The try_into cannot fail; for that to happen, the input EXE must
         // have contained at least 0x10000 relocations, which is impossible to
         // represent in the e_crlc field.
-        push_u16le(buf, checked_u16(j - i).unwrap());
+        push_u16le(buf, (j - i).try_into().unwrap());
         for pointer in relocs[i..j].iter() {
             push_u16le(buf, (pointer.abs() & 0xffff) as u16);
         }
@@ -482,12 +474,12 @@ pub fn pack(exe: &exe::Exe) -> Result<exe::Exe, Error> {
     encode_exepack_header(&mut body, &ExepackHeader {
         real_ip: exe.e_ip,
         real_cs: exe.e_cs,
-        exepack_size: checked_u16(exepack_size)
-            .ok_or(Error::Exepack(ExepackFormatError::ExepackTooLong(exepack_size)))?,
+        exepack_size: exepack_size.try_into()
+            .or(Err(Error::Exepack(ExepackFormatError::ExepackTooLong(exepack_size))))?,
         real_sp: exe.e_sp,
         real_ss: exe.e_ss,
-        dest_len: checked_u16(uncompressed.len() / 16)
-            .ok_or(Error::Exepack(ExepackFormatError::UncompressedTooLong(uncompressed.len())))?,
+        dest_len: (uncompressed.len() / 16).try_into()
+            .or(Err(Error::Exepack(ExepackFormatError::UncompressedTooLong(uncompressed.len()))))?,
         skip_len: 1,
         signature: EXEPACK_MAGIC,
     });
@@ -502,8 +494,8 @@ pub fn pack(exe: &exe::Exe) -> Result<exe::Exe, Error> {
     // Now that we know how big the output will be, we can build the output EXE.
     // The code segment points at the EXEPACK header, immediately after the
     // compressed data.
-    let e_cs = checked_u16(compressed.len() / 16)
-        .ok_or(ExepackFormatError::CompressedTooLong(compressed.len()))?;
+    let e_cs = (compressed.len() / 16).try_into()
+        .or(Err(ExepackFormatError::CompressedTooLong(compressed.len())))?;
     // When the decompression stub runs, it will copy itself to a location
     // higher in memory (past the end of the uncompressed data size) so that the
     // decompression process doesn't overwrite it while it is running. But we
@@ -532,8 +524,8 @@ pub fn pack(exe: &exe::Exe) -> Result<exe::Exe, Error> {
             let e_sp = 0xfff0 | (stack_pointer & 0xf);
             let e_ss = (stack_pointer - e_sp) >> 4;
             (
-                checked_u16(e_ss).ok_or(ExepackFormatError::SSTooLarge(e_ss))?,
-                e_sp as u16,
+                e_ss.try_into().or(Err(ExepackFormatError::SSTooLarge(e_ss)))?,
+                e_sp.try_into().unwrap(),
             )
         }
     };
