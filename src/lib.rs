@@ -45,7 +45,6 @@ mod debug;
 pub use debug::DEBUG;
 pub mod exe;
 mod pointer;
-pub use pointer::Pointer;
 
 /// Our pre-assembled decompression stub.
 pub const STUB: &'static [u8; 283] = include_bytes!("stub.bin");
@@ -133,7 +132,7 @@ pub enum ExepackFormatError {
     BogusCommand(usize, u8, usize),
     Gap(usize, usize),
     UncompressedTooLong(usize),
-    RelocationAddrTooLarge(Pointer),
+    RelocationAddrTooLarge(exe::Pointer),
     ExepackTooLong(usize),
     CompressedTooLong(usize),
     SSTooLarge(usize),
@@ -430,9 +429,9 @@ pub fn compress(output: &mut Vec<u8>, input: &[u8]) {
 }
 
 /// Encode a compressed relocation table.
-fn encode_relocs(buf: &mut Vec<u8>, relocs: &[Pointer]) -> Result<(), Error> {
+fn encode_relocs(buf: &mut Vec<u8>, relocs: &[exe::Pointer]) -> Result<(), Error> {
     // http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK#Relocation_Table
-    let mut relocs: Vec<Pointer> = relocs.iter().cloned().collect();
+    let mut relocs: Vec<exe::Pointer> = relocs.iter().cloned().collect();
     relocs.sort();
     let mut i = 0;
     for segment_index in 0..16 {
@@ -706,7 +705,7 @@ fn locate_end_of_stub(stub: &[u8]) -> Option<usize> {
 }
 
 // http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK#Relocation_Table
-fn parse_exepack_relocs(buf: &[u8]) -> Option<(usize, Vec<Pointer>)> {
+fn parse_exepack_relocs(buf: &[u8]) -> Option<(usize, Vec<exe::Pointer>)> {
     let mut relocs = Vec::new();
     let mut i = 0;
     for segment in 0..16 {
@@ -721,7 +720,7 @@ fn parse_exepack_relocs(buf: &[u8]) -> Option<(usize, Vec<Pointer>)> {
             }
             let offset = u16::from_le_bytes(buf[i..i+2].try_into().unwrap());
             i += 2;
-            relocs.push(Pointer {
+            relocs.push(exe::Pointer {
                 segment: segment * 0x1000,
                 offset: offset,
             });

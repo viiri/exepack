@@ -25,7 +25,7 @@ fn incompressible_body(len: usize) -> Vec<u8> {
     [0x66, 0x90].iter().cloned().cycle().take(len).collect()
 }
 
-fn make_exe(body: Vec<u8>, relocs: Vec<exepack::Pointer>) -> exe::Exe {
+fn make_exe(body: Vec<u8>, relocs: Vec<exe::Pointer>) -> exe::Exe {
     exe::Exe {
         e_minalloc: 0xffff,
         e_maxalloc: 0xffff,
@@ -39,8 +39,8 @@ fn make_exe(body: Vec<u8>, relocs: Vec<exepack::Pointer>) -> exe::Exe {
     }
 }
 
-fn make_relocs(n: usize) -> Vec<exepack::Pointer> {
-    (0..n).map(|address| exepack::Pointer {
+fn make_relocs(n: usize) -> Vec<exe::Pointer> {
+    (0..n).map(|address| exe::Pointer {
         segment: (address >> 4) as u16,
         offset: (address & 0xf) as u16,
     }).collect()
@@ -76,8 +76,8 @@ fn test_pack_relocs() {
     // f000:ffff
     // ffff:000f
     for &pointer in [
-        exepack::Pointer{ segment: 0xf000, offset: 0xffff },
-        exepack::Pointer{ segment: 0xffff, offset: 0x000f },
+        exe::Pointer{ segment: 0xf000, offset: 0xffff },
+        exe::Pointer{ segment: 0xffff, offset: 0x000f },
     ].iter() {
         let mut exe = make_compressible_exe(128, 0);
         exe.relocs.push(pointer);
@@ -90,8 +90,8 @@ fn test_pack_relocs() {
     // f001:fff0
     // ffff:0010
     for &pointer in [
-        exepack::Pointer{ segment: 0xf001, offset: 0xfff0 },
-        exepack::Pointer{ segment: 0xffff, offset: 0x0010 },
+        exe::Pointer{ segment: 0xf001, offset: 0xfff0 },
+        exe::Pointer{ segment: 0xffff, offset: 0x0010 },
     ].iter() {
         let mut exe = make_compressible_exe(128, 0);
         exe.relocs.push(pointer);

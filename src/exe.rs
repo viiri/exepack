@@ -5,7 +5,7 @@ use std::fmt;
 use std::io::{self, prelude::*};
 
 use crate::{annotate_io_error, read_u16le};
-use pointer::Pointer;
+pub use pointer::Pointer;
 
 const MAGIC: u16 = 0x5a4d; // "MZ"
 

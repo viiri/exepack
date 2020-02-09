@@ -98,7 +98,7 @@ fn test_unpack_unknown_stub() {
 #[test]
 fn test_unpack_relocations() {
     let mut sample = packed_sample();
-    sample.relocs.push(exepack::Pointer { segment: 0x0012, offset: 0x3400 });
+    sample.relocs.push(exe::Pointer { segment: 0x0012, offset: 0x3400 });
     maybe_save_exe("tests/exepack_with_relocs.exe", &sample).unwrap();
     match exepack::unpack(&sample) {
         Err(exepack::ExepackFormatError::RelocationsNotSupported) => (),
