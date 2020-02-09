@@ -311,7 +311,10 @@ mod tests {
     use super::*;
     use std::env;
     use std::fs;
+    use std::io;
     use std::path;
+
+    use tests;
 
     fn save_exe<P: AsRef<path::Path>>(path: P, contents: &[u8]) -> io::Result<()> {
         let f = fs::File::create(path)?;
@@ -345,11 +348,6 @@ mod tests {
     // io::Read, with no size hint
     fn read_exe(buf: &[u8]) -> Result<Exe, Error> {
         read_exe_with_hint(buf, None)
-    }
-
-    fn store_u16le(buf: &mut [u8], i: usize, v: u16) {
-        buf[i] = v as u8;
-        buf[i + 1] = (v >> 8) as u8;
     }
 
     #[test]
@@ -434,8 +432,8 @@ mod tests {
             (sample.len(), 0),
         ] {
             let mut sample = sample.clone();
-            store_u16le(&mut sample, 2, e_cblp as u16);
-            store_u16le(&mut sample, 4, e_cp as u16);
+            tests::store_u16le(&mut sample, 2, e_cblp as u16);
+            tests::store_u16le(&mut sample, 4, e_cp as u16);
             maybe_save_exe(format!("tests/e_cblp={}_e_cp={}.exe", e_cblp, e_cp), &sample).unwrap();
             match read_exe(&sample) {
                 Err(Error::Format(FormatError::BadNumPages(_, _))) => (),
@@ -452,8 +450,8 @@ mod tests {
         ] {
             let mut sample = sample.clone();
             let (e_cblp, e_cp) = encode_exe_len(len).unwrap();
-            store_u16le(&mut sample, 2, e_cblp as u16);
-            store_u16le(&mut sample, 4, e_cp as u16);
+            tests::store_u16le(&mut sample, 2, e_cblp as u16);
+            tests::store_u16le(&mut sample, 4, e_cp as u16);
             maybe_save_exe(format!("tests/exe_len_{}.exe", len), &sample).unwrap();
             match read_exe(&sample) {
                 Err(Error::Format(FormatError::TooShort(_, _))) => (),
@@ -467,8 +465,8 @@ mod tests {
             let mut sample = sample.clone();
             let len = 96;
             let (e_cblp, e_cp) = encode_exe_len(len).unwrap();
-            store_u16le(&mut sample, 2, e_cblp as u16);
-            store_u16le(&mut sample, 4, e_cp as u16);
+            tests::store_u16le(&mut sample, 2, e_cblp as u16);
+            tests::store_u16le(&mut sample, 4, e_cp as u16);
             maybe_save_exe(format!("tests/exe_len_{}.exe", len), &sample).unwrap();
             let exe = read_exe(&sample).unwrap();
             assert_eq!(exe.body.len(), len - 64);
@@ -482,7 +480,7 @@ mod tests {
         {
             let mut sample = sample.clone();
             // e_cparhdr = 1, in the middle of the header
-            store_u16le(&mut sample, 8, 1);
+            tests::store_u16le(&mut sample, 8, 1);
             maybe_save_exe("tests/cparhdr_short_header.exe", &sample).unwrap();
             match read_exe(&sample) {
                 Err(Error::Format(FormatError::HeaderTooShort(16))) => (),
@@ -492,7 +490,7 @@ mod tests {
         {
             let mut sample = sample.clone();
             // e_cparhdr = 2, in the middle of the relocations
-            store_u16le(&mut sample, 8, 2);
+            tests::store_u16le(&mut sample, 8, 2);
             maybe_save_exe("tests/cparhdr_short_relocs.exe", &sample).unwrap();
             match read_exe(&sample) {
                 Err(Error::Format(FormatError::HeaderTooShort(32))) => (),
@@ -502,7 +500,7 @@ mod tests {
         {
             let mut sample = sample.clone();
             // e_lfarlc = 128, after the header end
-            store_u16le(&mut sample, 24, 128);
+            tests::store_u16le(&mut sample, 24, 128);
             maybe_save_exe("tests/cparhdr_relocs_outside_header.exe", &sample).unwrap();
             match read_exe(&sample) {
                 Err(Error::Format(FormatError::HeaderTooShort(64))) => (),

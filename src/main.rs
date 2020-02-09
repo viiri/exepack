@@ -37,6 +37,8 @@ mod debug;
 mod exe;
 mod exepack;
 mod pointer;
+#[cfg(test)]
+mod tests;
 
 #[derive(Debug)]
 enum Error {
