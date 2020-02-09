@@ -53,12 +53,11 @@ fn round_up(n: usize, m: usize) -> Option<usize> {
 fn read_u16le<R: Read + ?Sized>(r: &mut R) -> io::Result<u16> {
     let mut buf = [0; 2];
     r.read_exact(&mut buf)?;
-    Ok((buf[0] as u16) | ((buf[1] as u16) << 8))
+    Ok(u16::from_le_bytes(buf))
 }
 
 fn push_u16le(buf: &mut Vec<u8>, v: u16) {
-    buf.push(v as u8);
-    buf.push((v >> 8) as u8);
+    buf.extend(&u16::to_le_bytes(v));
 }
 
 #[derive(Debug)]
@@ -377,8 +376,7 @@ fn compress(output: &mut Vec<u8>, input: &[u8]) {
             Cmd::C => {
                 let len = C[i].len as usize;
                 output.extend(input[j..(j + len)].iter());
-                output.push(len as u8);
-                output.push((len >> 8) as u8);
+                output.extend_from_slice(&u16::to_le_bytes(len as u16));
                 output.push(0xb2 | is_final);
                 is_final = 0;
                 j += len;
@@ -386,8 +384,7 @@ fn compress(output: &mut Vec<u8>, input: &[u8]) {
             Cmd::F => {
                 let len = F[i].len as usize;
                 output.push(input[j]);
-                output.push(len as u8);
-                output.push((len >> 8) as u8);
+                output.extend_from_slice(&u16::to_le_bytes(len as u16));
                 output.push(0xb0 | is_final);
                 is_final = 0;
                 j += len;
@@ -414,7 +411,7 @@ fn compress(output: &mut Vec<u8>, input: &[u8]) {
 /// Encode a compressed relocation table.
 fn encode_relocs(buf: &mut Vec<u8>, relocs: &[exe::Pointer]) -> Result<(), Error> {
     // http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK#Relocation_Table
-    let mut relocs: Vec<exe::Pointer> = relocs.iter().cloned().collect();
+    let mut relocs: Vec<_> = relocs.iter().cloned().collect();
     relocs.sort();
     let mut i = 0;
     for segment_index in 0..16 {
@@ -826,10 +823,6 @@ mod tests {
     const FILL: u8 = 0xb0;
     const FINAL: u8 = 0x01;
 
-    fn mkvec<T: Copy>(s: &[T]) -> Vec<T> {
-        s.iter().cloned().collect()
-    }
-
     #[test]
     fn test_unpad() {
         // unpadding can leave an empty buffer
@@ -853,8 +846,7 @@ mod tests {
     // non-mutating version of decompress, return the trimmed, decompressed
     // output instead of modifying the input in place.
     fn decompress_new(buf: &[u8], dst: usize, src: usize) -> Result<Vec<u8>, ExepackFormatError> {
-        let mut work = Vec::new();
-        work.extend(buf.iter());
+        let mut work: Vec<_> = buf.to_vec();
         match decompress(&mut work, dst, src) {
             Ok(_) => { work.resize(dst, 0); Ok(work) },
             Err(e) => Err(e),
@@ -911,7 +903,7 @@ mod tests {
         ];
         for &(input, dst) in inputs {
             let src = input.len();
-            let mut work = mkvec(input);
+            let mut work = input.to_vec();
             if dst > src {
                 work.resize(dst, 0);
             }
@@ -930,7 +922,7 @@ mod tests {
         ];
         for &(input, dst) in inputs {
             let src = input.len();
-            let mut work = mkvec(input);
+            let mut work = input.to_vec();
             if dst > src {
                 work.resize(dst, 0);
             }
@@ -950,7 +942,7 @@ mod tests {
         ];
         for &(input, dst) in inputs {
             let src = input.len();
-            let mut work = mkvec(input);
+            let mut work = input.to_vec();
             if dst > src {
                 work.resize(dst, 0);
             }
@@ -985,7 +977,7 @@ mod tests {
         ];
         for &(input, dst, output) in inputs {
             let src = input.len();
-            let mut work = mkvec(input);
+            let mut work = input.to_vec();
             if dst > src {
                 work.resize(dst, 0);
             }
@@ -1271,12 +1263,11 @@ mod tests {
     }
 
     fn store_u16le(buf: &mut [u8], i: usize, v: u16) {
-        buf[i] = v as u8;
-        buf[i + 1] = (v >> 8) as u8;
+        buf[i..i+2].clone_from_slice(&u16::to_le_bytes(v));
     }
 
     fn fetch_u16le(buf: &[u8], i: usize) -> u16 {
-        buf[i] as u16 | ((buf[i + 1] as u16) << 8)
+        u16::from_le_bytes(buf[i..i+2].try_into().unwrap())
     }
 
     fn unpacked_sample() -> exe::Exe {

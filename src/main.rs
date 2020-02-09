@@ -120,11 +120,8 @@ const EXEPACK_ERRMSG: &[u8] = b"Packed file is corrupt";
 // likely an EXEPACK decompression stub.
 fn stub_resembles_exepack(stub: &[u8]) -> bool {
     // No equivalent of str::contains for &[u8]...
-    for i in 0.. {
-        if i + EXEPACK_ERRMSG.len() > stub.len() {
-            break;
-        }
-        if &stub[i..(i + EXEPACK_ERRMSG.len())] == EXEPACK_ERRMSG {
+    for window in stub.windows(EXEPACK_ERRMSG.len()) {
+        if window == EXEPACK_ERRMSG {
             return true;
         }
     }
@@ -140,17 +137,13 @@ fn test_stub_resembles_exepack() {
     assert_eq!(stub_resembles_exepack(b"XXPacked file is corruptXXPacked file is corruptXX"), true);
 }
 
-fn escape_u8(c: u8) -> String {
-    format!("\\x{:02x}", c)
-}
-
 fn escape(buf: &[u8]) -> String {
     let mut s = String::new();
     for c in buf.iter() {
         if c.is_ascii_alphanumeric() {
             s.push(*c as char)
         } else {
-            s.push_str(&escape_u8(*c))
+            s.push_str(&format!("\\x{:02x}", *c))
         }
     }
     s

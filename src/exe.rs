@@ -9,7 +9,7 @@ pub use pointer::Pointer;
 fn read_u16le<R: Read + ?Sized>(r: &mut R) -> io::Result<u16> {
     let mut buf = [0; 2];
     r.read_exact(&mut buf)?;
-    Ok((buf[0] as u16) | ((buf[1] as u16) << 8))
+    Ok(u16::from_le_bytes(buf))
 }
 
 /// Adds a prefix to the message of an `io::Error`.
