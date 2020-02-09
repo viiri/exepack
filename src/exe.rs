@@ -4,8 +4,13 @@ use std::convert::TryInto;
 use std::fmt;
 use std::io::{self, prelude::*};
 
-use crate::{annotate_io_error, read_u16le};
+use crate::read_u16le;
 pub use pointer::Pointer;
+
+/// Adds a prefix to the message of an `io::Error`.
+fn annotate_io_error(err: io::Error, msg: &str) -> io::Error {
+    io::Error::new(err.kind(), format!("{}: {}", msg, err))
+}
 
 const MAGIC: u16 = 0x5a4d; // "MZ"
 

@@ -73,11 +73,6 @@ fn checked_u16(n: usize) -> Option<u16> {
     }
 }
 
-/// Add a prefix to the message of an `io::Error`.
-fn annotate_io_error(err: io::Error, msg: &str) -> io::Error {
-    io::Error::new(err.kind(), format!("{}: {}", msg, err))
-}
-
 #[derive(Debug)]
 pub enum Error {
     Io(io::Error),
