@@ -138,7 +138,7 @@ fn unpack_file<P: AsRef<Path>>(path: P) -> Result<exe::Exe, Error> {
     let file_len = f.metadata()?.len();
     let mut f = io::BufReader::new(f);
     let exe = exe::Exe::read(&mut f, Some(file_len))?;
-    exepack::unpack(&exe).or_else(|err| Err(From::from(err)))
+    exepack::unpack(&exe).map_err(|err| From::from(err))
 }
 
 fn decompress_mode<P: AsRef<Path>>(input_path: P, output_path: P) -> Result<(), TopLevelError> {
