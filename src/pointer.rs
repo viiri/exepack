@@ -1,8 +1,8 @@
 use std::cmp;
 use std::fmt;
 
-#[derive(Debug, Copy, Clone)]
 /// A segment:offset far pointer.
+#[derive(Clone, Copy, Debug, Eq)]
 pub struct Pointer {
     pub segment: u16,
     pub offset: u16,
@@ -37,5 +37,3 @@ impl cmp::PartialEq for Pointer {
         self.abs() == other.abs()
     }
 }
-
-impl cmp::Eq for Pointer {}
