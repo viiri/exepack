@@ -163,7 +163,6 @@ impl Exe {
         } else {
             Vec::new()
         };
-        debug!("{:?}", relocs);
         pos += relocs.len() as u64 * 4;
 
         // Discard bytes up to the end of the header.
