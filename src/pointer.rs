@@ -20,19 +20,19 @@ impl fmt::Display for Pointer {
     }
 }
 
-impl cmp::Ord for Pointer {
+impl Ord for Pointer {
     fn cmp(&self, other: &Self) -> cmp::Ordering {
         self.abs().cmp(&other.abs())
     }
 }
 
-impl cmp::PartialOrd for Pointer {
+impl PartialOrd for Pointer {
     fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl cmp::PartialEq for Pointer {
+impl PartialEq for Pointer {
     fn eq(&self, other: &Self) -> bool {
         self.abs() == other.abs()
     }
