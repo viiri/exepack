@@ -266,9 +266,16 @@ fn write_relocs<W: Write + ?Sized>(w: &mut W, relocs: &[Pointer]) -> io::Result<
     Ok(n)
 }
 
-/// Reads and discards `n` bytes.
+/// Reads and discards `n` bytes from `r`. Returns an error of the kind
+/// `io::ErrorKind::UnexpectedEof` if EOF occurs before `n` bytes can be read.
 fn discard<R: Read + ?Sized>(r: &mut R, n: u64) -> io::Result<u64> {
-    io::copy(&mut r.take(n), &mut io::sink())
+    io::copy(&mut r.take(n), &mut io::sink()).and_then(|count|
+        if count == n {
+            Ok(count)
+        } else {
+            Err(io::Error::new(io::ErrorKind::UnexpectedEof, format!("{}", count)))
+        }
+    )
 }
 
 fn read_relocs<R: Read + ?Sized>(r: &mut R, num_relocs: usize) -> io::Result<Vec<Pointer>> {
@@ -314,6 +321,16 @@ mod tests {
     use std::path;
 
     use tests;
+
+    #[test]
+    fn test_discard() {
+        let mut r = &b"aaaabcde"[..];
+        assert_eq!(discard(&mut r, 0).unwrap(), 0);
+        assert_eq!(r, b"aaaabcde");
+        assert_eq!(discard(&mut r, 4).unwrap(), 4);
+        assert_eq!(r, b"bcde");
+        assert_eq!(discard(&mut r, 5).unwrap_err().kind(), io::ErrorKind::UnexpectedEof);
+    }
 
     fn save_exe<P: AsRef<path::Path>>(path: P, contents: &[u8]) -> io::Result<()> {
         let f = fs::File::create(path)?;
