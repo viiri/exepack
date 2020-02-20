@@ -4,7 +4,7 @@ use std::convert::TryInto;
 use std::fmt;
 use std::io::{self, prelude::*};
 
-pub use pointer::Pointer;
+use pointer::Pointer;
 
 fn read_u16le<R: Read + ?Sized>(r: &mut R) -> io::Result<u16> {
     let mut buf = [0; 2];

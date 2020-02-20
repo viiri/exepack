@@ -3,6 +3,7 @@ use std::str;
 
 use exe;
 use exepack;
+use pointer::Pointer;
 use tests;
 
 #[test]
@@ -58,7 +59,7 @@ fn test_unknown_stub() {
 #[test]
 fn test_relocations() {
     let mut sample = tests::packed_sample();
-    sample.relocs.push(exe::Pointer { segment: 0x0012, offset: 0x3400 });
+    sample.relocs.push(Pointer { segment: 0x0012, offset: 0x3400 });
     tests::maybe_save_exe("tests/exepack_with_relocs.exe", &sample).unwrap();
     match exepack::unpack(&sample) {
         Err(exepack::FormatError::RelocationsNotSupported) => (),
