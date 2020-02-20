@@ -1,4 +1,9 @@
 //! Reading and writing 16-bit DOS MZ executables.
+//!
+//! # References
+//!
+//! * [EXE Format](http://www.delorie.com/djgpp/doc/exe/)
+//! * [Notes on the format of DOS .EXE files](http://www.tavi.co.uk/phobos/exeformat.html)
 
 use std::convert::TryInto;
 use std::fmt;
@@ -6,26 +11,19 @@ use std::io::{self, prelude::*};
 
 use pointer::Pointer;
 
-fn read_u16le<R: Read + ?Sized>(r: &mut R) -> io::Result<u16> {
-    let mut buf = [0; 2];
-    r.read_exact(&mut buf)?;
-    Ok(u16::from_le_bytes(buf))
-}
-
-/// Adds a prefix to the message of an `io::Error`.
-fn annotate_io_error(err: io::Error, msg: &str) -> io::Error {
-    io::Error::new(err.kind(), format!("{}: {}", msg, err))
-}
-
+/// The magic number of an EXE file, interpreted as a little-endian integer.
 const MAGIC: u16 = 0x5a4d; // "MZ"
 
 /// The length of an EXE header, excluding relocations and variable-sized
 /// padding.
 const HEADER_LEN: u64 = 28;
 
+/// The error type for `Exe::read` and `Exe::write` operations.
 #[derive(Debug)]
 pub enum Error {
+    /// An `io::Error` that occurred while reading or writing an `Exe`.
     Io(io::Error),
+    /// An EXE file format error.
     Format(FormatError),
 }
 
@@ -52,33 +50,51 @@ impl From<FormatError> for Error {
     }
 }
 
+/// An EXE file format error.
 #[derive(Debug)]
 pub enum FormatError {
-    BadMagic(u16),
-    BadNumPages(u16, u16),
-    HeaderTooShort(u64),
-    RelocationsOverlapHeader(u64),
-    TooManyRelocations(usize),
-    TooShort(u64, u64),
-    TooLong(usize),
-    HeaderTooLong(usize),
+    /// While reading, the file's magic number is not `b"MZ"`.
+    Magic { e_magic: u16 },
+    /// While reading, the header fields `e_cp` and `e_cblp` are an invalid
+    /// length encoding. They encode a negative length, or have `e_cblp` > 511.
+    InvalidSize { e_cp: u16, e_cblp: u16 },
+    /// While reading, the relocation table starts before the end of the fixed
+    /// part of the EXE header.
+    RelocationsOverlapHeader { e_lfarlc: u16 },
+    /// While reading, the header length declared by `e_cparhdr` is too short to
+    /// contain the EXE header and relocation table.
+    HeaderTooShort { e_cparhdr: u16 },
+    /// While reading, the EXE size is too short to contain the EXE header.
+    TooShort { e_cp: u16, e_cblp: u16, e_cparhdr: u16 },
+    /// While writing, the EXE size is too large to represent.
+    TooLong { len: usize },
+    /// While writing, the number of relocations exceeds 0xffff.
+    TooManyRelocations { num: usize },
 }
 
 impl fmt::Display for FormatError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            FormatError::BadMagic(e_magic) => write!(f, "Bad EXE magic 0x{:04x}; expected 0x{:04x}", e_magic, MAGIC),
-            FormatError::BadNumPages(e_cp, e_cblp) => write!(f, "Bad EXE size ({}, {})", e_cp, e_cblp),
-            FormatError::HeaderTooShort(header_len) => write!(f, "EXE header of {} bytes is too small", header_len),
-            FormatError::RelocationsOverlapHeader(relocs_offset) => write!(f, "Relocations starting at 0x{:04x} overlap the EXE header", relocs_offset),
-            FormatError::TooManyRelocations(n) => write!(f, "{} relocations are too many to fit in 16 bits", n),
-            FormatError::TooShort(exe_len, header_len) => write!(f, "EXE size of {} bytes is too small to contain header of {} bytes", exe_len, header_len),
-            FormatError::TooLong(len) => write!(f, "EXE size of {} bytes is too large to represent", len),
-            FormatError::HeaderTooLong(len) => write!(f, "EXE header size of {} bytes is too large to represent", len),
+            FormatError::Magic { e_magic } =>
+                write!(f, "Bad EXE magic (e_magic=0x{:04x})", e_magic),
+            FormatError::InvalidSize { e_cp, e_cblp } =>
+                write!(f, "Invalid EXE size encoding (e_cp={}, e_cblp={})", e_cp, e_cblp),
+            FormatError::RelocationsOverlapHeader { e_lfarlc } =>
+                write!(f, "Relocation table overlaps the EXE header (e_lfarlc={})", e_lfarlc),
+            FormatError::HeaderTooShort { e_cparhdr } =>
+                write!(f, "EXE header is too short (e_cparhdr={})", e_cparhdr),
+            FormatError::TooShort { e_cp, e_cblp, e_cparhdr } =>
+                write!(f, "EXE is too short to contain header (e_cp={}, e_cblp={}, e_cparhdr={})", e_cp, e_cblp, e_cparhdr),
+            FormatError::TooLong { len } =>
+                write!(f, "EXE size is too large to represent ({})", len),
+            FormatError::TooManyRelocations { num } =>
+                write!(f, "Too many relocations to represent in 16 bits ({})", num),
         }
     }
 }
 
+/// A 16-bit MZ format DOS executable. It omits any data that may have appeared
+/// after the end of the size stated in the EXE header.
 #[derive(Debug)]
 pub struct Exe {
     // Some fields taken verbatim from the EXE header, the ones that aren't
@@ -93,11 +109,23 @@ pub struct Exe {
     pub e_cs: u16,
     pub e_ovno: u16,
 
-    // Relocations from the header.
+    /// Relocation addresses.
     pub relocs: Vec<Pointer>,
 
-    // The program body following the header.
+    /// The program body that follows the header.
     pub body: Vec<u8>,
+}
+
+/// Reads a little-endian `u16` from `r`.
+fn read_u16le<R: Read + ?Sized>(r: &mut R) -> io::Result<u16> {
+    let mut buf = [0; 2];
+    r.read_exact(&mut buf)?;
+    Ok(u16::from_le_bytes(buf))
+}
+
+/// Adds a prefix to the message of an `io::Error`.
+fn annotate_io_error(err: io::Error, msg: &str) -> io::Error {
+    io::Error::new(err.kind(), format!("{}: {}", msg, err))
 }
 
 impl Exe {
@@ -111,23 +139,19 @@ impl Exe {
         {
             let e_magic = read_u16le(input)?;
             if e_magic != MAGIC {
-                return Err(Error::Format(FormatError::BadMagic(e_magic)));
+                return Err(From::from(FormatError::Magic { e_magic }));
             }
         }
-        let exe_len = {
-            let e_cblp = read_u16le(input)?;
-            let e_cp = read_u16le(input)?;
-            decode_exe_len(e_cblp, e_cp)
-                .ok_or(Error::Format(FormatError::BadNumPages(e_cp, e_cblp)))?
-        };
+        let e_cblp = read_u16le(input)?;
+        let e_cp = read_u16le(input)?;
+        let exe_len = decode_exe_len(e_cblp, e_cp)
+                .ok_or(FormatError::InvalidSize { e_cp, e_cblp })?;
         let num_relocs = {
             let e_crlc = read_u16le(input)?;
             e_crlc as usize
         };
-        let header_len = {
-            let e_cparhdr = read_u16le(input)?;
-            e_cparhdr as u64 * 16
-        };
+        let e_cparhdr = read_u16le(input)?;
+        let header_len = e_cparhdr as u64 * 16;
         let e_minalloc = read_u16le(input)?;
         let e_maxalloc = read_u16le(input)?;
         let e_ss = read_u16le(input)?;
@@ -141,10 +165,8 @@ impl Exe {
         read_u16le(input)?;
         let e_ip = read_u16le(input)?;
         let e_cs = read_u16le(input)?;
-        let relocs_offset = {
-            let e_lfarlc = read_u16le(input)?;
-            e_lfarlc as u64
-        };
+        let e_lfarlc = read_u16le(input)?;
+        let relocs_offset = e_lfarlc as u64;
         let e_ovno = read_u16le(input)?;
 
         // We have now read HEADER_LEN bytes.
@@ -154,7 +176,7 @@ impl Exe {
         let relocs = if num_relocs > 0 {
             // Discard bytes up to the beginning of the relocation table.
             pos += discard(input, relocs_offset.checked_sub(pos)
-                .ok_or(Error::Format(FormatError::RelocationsOverlapHeader(relocs_offset)))?
+                .ok_or(FormatError::RelocationsOverlapHeader { e_lfarlc })?
             ).map_err(|err| annotate_io_error(err, "reading to beginning of relocation table"))?;
             assert_eq!(pos, relocs_offset);
             // Read the relocation table itself.
@@ -167,13 +189,13 @@ impl Exe {
 
         // Discard bytes up to the end of the header.
         pos += discard(input, header_len.checked_sub(pos)
-            .ok_or(Error::Format(FormatError::HeaderTooShort(header_len)))?
+            .ok_or(FormatError::HeaderTooShort { e_cparhdr })?
         ).map_err(|err| annotate_io_error(err, "reading to end of header"))?;
 
         // Read the EXE body.
         let body = {
             let body_len = exe_len.checked_sub(pos)
-                .ok_or(Error::Format(FormatError::TooShort(exe_len, header_len)))?;
+                .ok_or(FormatError::TooShort { e_cp, e_cblp, e_cparhdr })?;
             let mut body = vec![0; body_len.try_into().unwrap()];
             input.read_exact(&mut body)
                 .map_err(|err| annotate_io_error(err, "reading EXE body"))?;
@@ -207,12 +229,14 @@ impl Exe {
         // http://www.delorie.com/djgpp/doc/exe/: "Note that some OSs and/or
         // programs may fail if the header is not a multiple of 512 bytes."
         let num_header_pages = ((HEADER_LEN as usize + 4 * self.relocs.len()) + 511) / 512;
-        let (e_cblp, e_cp) = encode_exe_len(num_header_pages * 512 + self.body.len())
-            .ok_or(FormatError::TooLong(num_header_pages * 512 + self.body.len()))?;
+        let exe_len = num_header_pages * 512 + self.body.len();
+        let (e_cblp, e_cp) = encode_exe_len(exe_len)
+            .ok_or(FormatError::TooLong { len: exe_len })?;
         let e_crlc = self.relocs.len().try_into()
-            .or(Err(FormatError::TooManyRelocations(self.relocs.len())))?;
-        let e_cparhdr: u16 = (num_header_pages * 512 / 16).try_into()
-            .or(Err(FormatError::HeaderTooLong(num_header_pages * 512)))?;
+            .or(Err(FormatError::TooManyRelocations { num: self.relocs.len() }))?;
+        // This next calculation always fits into a u16, so panic rather than
+        // return an error.
+        let e_cparhdr: u16 = (num_header_pages * 512 / 16).try_into().unwrap();
         let mut n = 0;
         n += write_u16le(w, MAGIC)?;
         n += write_u16le(w, e_cblp)?;
@@ -404,7 +428,7 @@ mod tests {
         sample[1] = b'Y';
         maybe_save_exe("tests/bad_exe_magic.exe", &sample).unwrap();
         match read_exe(&sample) {
-            Err(Error::Format(FormatError::BadMagic(0x5958))) => (),
+            Err(Error::Format(FormatError::Magic { e_magic: 0x5958 })) => (),
             x => panic!("{:?}", x),
         }
     }
@@ -452,7 +476,7 @@ mod tests {
             tests::store_u16le(&mut sample, 4, e_cp as u16);
             maybe_save_exe(format!("tests/e_cblp={}_e_cp={}.exe", e_cblp, e_cp), &sample).unwrap();
             match read_exe(&sample) {
-                Err(Error::Format(FormatError::BadNumPages(_, _))) => (),
+                Err(Error::Format(FormatError::InvalidSize { .. })) => (),
                 x => panic!("{:?}", x),
             }
         }
@@ -470,7 +494,7 @@ mod tests {
             tests::store_u16le(&mut sample, 4, e_cp as u16);
             maybe_save_exe(format!("tests/exe_len_{}.exe", len), &sample).unwrap();
             match read_exe(&sample) {
-                Err(Error::Format(FormatError::TooShort(_, _))) => (),
+                Err(Error::Format(FormatError::TooShort { .. })) => (),
                 x => panic!("{:?}", x),
             }
         }
@@ -499,7 +523,7 @@ mod tests {
             tests::store_u16le(&mut sample, 8, 1);
             maybe_save_exe("tests/cparhdr_short_header.exe", &sample).unwrap();
             match read_exe(&sample) {
-                Err(Error::Format(FormatError::HeaderTooShort(16))) => (),
+                Err(Error::Format(FormatError::HeaderTooShort { e_cparhdr: 1 })) => (),
                 x => panic!("{:?}", x),
             }
         }
@@ -509,7 +533,7 @@ mod tests {
             tests::store_u16le(&mut sample, 8, 2);
             maybe_save_exe("tests/cparhdr_short_relocs.exe", &sample).unwrap();
             match read_exe(&sample) {
-                Err(Error::Format(FormatError::HeaderTooShort(32))) => (),
+                Err(Error::Format(FormatError::HeaderTooShort { e_cparhdr: 2 })) => (),
                 x => panic!("{:?}", x),
             }
         }
@@ -519,9 +543,47 @@ mod tests {
             tests::store_u16le(&mut sample, 24, 128);
             maybe_save_exe("tests/cparhdr_relocs_outside_header.exe", &sample).unwrap();
             match read_exe(&sample) {
-                Err(Error::Format(FormatError::HeaderTooShort(64))) => (),
+                Err(Error::Format(FormatError::HeaderTooShort { e_cparhdr: 4 })) => (),
                 x => panic!("{:?}", x),
             }
+        }
+    }
+
+    #[test]
+    fn test_write_exe_too_long() {
+        let exe = Exe {
+            e_minalloc: 0,
+            e_maxalloc: 0,
+            e_ss: 0,
+            e_sp: 0,
+            e_ip: 0,
+            e_cs: 0,
+            e_ovno: 0,
+            relocs: Vec::new(),
+            body: std::iter::repeat(0).take(0xffff * 512 + 1).collect(),
+        };
+        match exe.write(&mut io::sink()) {
+            Err(Error::Format(FormatError::TooLong { len: 0x2000001 })) => (),
+            x => panic!("{:?}", x),
+        }
+    }
+
+    #[test]
+    fn test_write_exe_too_many_relocations() {
+        let exe = Exe {
+            e_minalloc: 0,
+            e_maxalloc: 0,
+            e_ss: 0,
+            e_sp: 0,
+            e_ip: 0,
+            e_cs: 0,
+            e_ovno: 0,
+            relocs: (0..0x10000).map(|i| Pointer { segment: (i >> 16) as u16, offset: i as u16 }).collect(),
+            body: Vec::new(),
+        };
+        match exe.write(&mut io::sink()) {
+            Err(Error::Format(FormatError::TooManyRelocations { num: 0x10000 })) => (),
+            x => panic!("{:?}", x),
         }
     }
 }

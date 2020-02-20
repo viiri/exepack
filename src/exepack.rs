@@ -51,6 +51,7 @@ fn round_up(n: usize, m: usize) -> Option<usize> {
     n.checked_add((m - n % m) % m)
 }
 
+/// Reads a little-endian `u16` from `r`.
 fn read_u16le<R: Read + ?Sized>(r: &mut R) -> io::Result<u16> {
     let mut buf = [0; 2];
     r.read_exact(&mut buf)?;
