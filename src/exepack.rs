@@ -954,6 +954,7 @@ mod tests {
             &[1],
             &[1, 2, 3, 4, 5],
             &[1, 2, 3, 4, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 1, 2, 3, 4],
+            &[3, 3, 3, 3, 3, 3, 3, 3, 1, 2, 1, 2, 1, 2, 1, 2, 9, 9, 9, 9, 9, 9, 9, 9],
             b"Hellllllllllllllllo, world\n",
             // try compressing command codes themselves
             &[FILL, FILL, FILL, FILL, FILL, FILL, FILL, FILL],
