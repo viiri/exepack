@@ -44,7 +44,7 @@ use exe;
 use pointer::Pointer;
 
 /// Our pre-assembled decompression stub.
-pub const STUB: &'static [u8; 283] = include_bytes!("stub.bin");
+pub const STUB: [u8; 283] = *include_bytes!("stub.bin");
 
 /// Round `n` up to the next multiple of `m`.
 fn round_up(n: usize, m: usize) -> Option<usize> {
@@ -377,7 +377,7 @@ fn compress(output: &mut Vec<u8>, input: &[u8]) {
 /// Encode a compressed relocation table.
 fn encode_relocs(buf: &mut Vec<u8>, relocs: &[Pointer]) -> Result<(), FormatError> {
     // http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK#Relocation_Table
-    let mut relocs: Vec<_> = relocs.iter().cloned().collect();
+    let mut relocs = relocs.to_vec();
     relocs.sort();
     let mut i = 0;
     for segment_index in 0..16 {
@@ -428,7 +428,7 @@ pub fn pack(exe: &exe::Exe) -> Result<exe::Exe, FormatError> {
     let mut body = Vec::new();
 
     // Start with the padded, compressed data.
-    body.extend(compressed.iter());
+    body.extend_from_slice(&compressed);
 
     // Next, the 18-byte EXEPACK header.
     let exepack_size = (18 as usize)
@@ -448,10 +448,10 @@ pub fn pack(exe: &exe::Exe) -> Result<exe::Exe, FormatError> {
     });
 
     // Then the stub itself.
-    body.extend(STUB.iter());
+    body.extend_from_slice(&STUB);
 
     // Finally, the packed relocation table.
-    body.extend(relocs_buf.iter());
+    body.extend_from_slice(&relocs_buf);
 
 
     // Now that we know how big the output will be, we can build the output EXE.

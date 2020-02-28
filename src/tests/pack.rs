@@ -17,7 +17,7 @@ fn compressible_body(len: usize) -> Vec<u8> {
 // cannot be smaller after compression
 fn incompressible_body(len: usize) -> Vec<u8> {
     // 66 90 is a 2-byte NOP.
-    [0x66, 0x90].iter().cloned().cycle().take(len).collect()
+    [0x66, 0x90].into_iter().cloned().cycle().take(len).collect()
 }
 
 fn make_exe(body: Vec<u8>, relocs: Vec<Pointer>) -> exe::Exe {
@@ -54,10 +54,10 @@ fn test_relocs() {
     // two encodings of the largest relocation address EXEPACK can represent.
     // f000:ffff
     // ffff:000f
-    for &pointer in [
+    for &pointer in &[
         Pointer{ segment: 0xf000, offset: 0xffff },
         Pointer{ segment: 0xffff, offset: 0x000f },
-    ].iter() {
+    ] {
         let mut exe = make_compressible_exe(128, 0);
         exe.relocs.push(pointer);
         tests::maybe_save_exe(format!("tests/reloc_{:04x}:{:04x}.exe", pointer.segment, pointer.offset), &exe).unwrap();
@@ -68,10 +68,10 @@ fn test_relocs() {
     // two encodings of a relocation address too large to represent
     // f001:fff0
     // ffff:0010
-    for &pointer in [
+    for &pointer in &[
         Pointer{ segment: 0xf001, offset: 0xfff0 },
         Pointer{ segment: 0xffff, offset: 0x0010 },
-    ].iter() {
+    ] {
         let mut exe = make_compressible_exe(128, 0);
         exe.relocs.push(pointer);
         tests::maybe_save_exe(format!("tests/reloc_{:04x}:{:04x}.exe", pointer.segment, pointer.offset), &exe).unwrap();

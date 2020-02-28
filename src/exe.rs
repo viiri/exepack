@@ -283,7 +283,7 @@ fn write_u16le<W: Write + ?Sized>(w: &mut W, v: u16) -> io::Result<u64> {
 
 fn write_relocs<W: Write + ?Sized>(w: &mut W, relocs: &[Pointer]) -> io::Result<u64> {
     let mut n = 0;
-    for pointer in relocs.iter() {
+    for pointer in relocs {
         n += write_u16le(w, pointer.offset)?;
         n += write_u16le(w, pointer.segment)?;
     }

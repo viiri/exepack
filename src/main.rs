@@ -185,11 +185,11 @@ fn test_stub_resembles_exepack() {
 
 fn escape(buf: &[u8]) -> String {
     let mut s = String::new();
-    for c in buf.iter() {
+    for &c in buf {
         if c.is_ascii_alphanumeric() {
-            s.push(*c as char)
+            s.push(c as char)
         } else {
-            s.push_str(&format!("\\x{:02x}", *c))
+            s.push_str(&format!("\\x{:02x}", c))
         }
     }
     s
