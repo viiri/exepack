@@ -866,9 +866,7 @@ mod tests {
         for &(input, dst) in inputs {
             let src = input.len();
             let mut work = input.to_vec();
-            if dst > src {
-                work.resize(dst, 0);
-            }
+            work.resize(cmp::max(src, dst), 0);
             match decompress_new(&work, dst, src) {
                 Err(FormatError::FillOverflow(_, _, _, _, 0xaa)) => (),
                 x => panic!("{:?} {:?}", x, (input, dst)),
@@ -885,9 +883,7 @@ mod tests {
         for &(input, dst) in inputs {
             let src = input.len();
             let mut work = input.to_vec();
-            if dst > src {
-                work.resize(dst, 0);
-            }
+            work.resize(cmp::max(src, dst), 0);
             match decompress_new(&work, dst, src) {
                 Err(FormatError::CopyOverflow(_, _, _, _)) => (),
                 x => panic!("{:?} {:?}", x, (input, dst)),
@@ -905,9 +901,7 @@ mod tests {
         for &(input, dst) in inputs {
             let src = input.len();
             let mut work = input.to_vec();
-            if dst > src {
-                work.resize(dst, 0);
-            }
+            work.resize(cmp::max(src, dst), 0);
             match decompress_new(&work, dst, src) {
                 Err(FormatError::Gap(_, _)) => (),
                 x => panic!("{:?} {:?}", x, (input, dst)),
@@ -940,9 +934,7 @@ mod tests {
         for &(input, dst, output) in inputs {
             let src = input.len();
             let mut work = input.to_vec();
-            if dst > src {
-                work.resize(dst, 0);
-            }
+            work.resize(cmp::max(src, dst), 0);
             assert_eq!(&decompress_new(&work, dst, src).unwrap(), &output);
         }
     }
@@ -970,9 +962,7 @@ mod tests {
             let mut work = Vec::new();
             compress(&mut work, input);
             let compressed_len = work.len();
-            if work.len() < input.len() {
-                work.resize(input.len(), 0);
-            }
+            work.resize(cmp::max(compressed_len, input.len()), 0);
             decompress(&mut work, input.len(), compressed_len).unwrap();
             assert_eq!(&&work[0..input.len()], input);
         }
