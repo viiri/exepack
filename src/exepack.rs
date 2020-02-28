@@ -134,242 +134,225 @@ impl fmt::Display for FormatError {
 /// The basic compression loop. The compressed data are read (going forwards)
 /// from `input` and written into the end of `output`.
 ///
-/// <http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK#Decompression_algorithm>
+/// # References
+///
+/// * <http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK#Decompression_algorithm>
 fn compress(output: &mut Vec<u8>, input: &[u8]) {
     // Since we produce our own self-extracting executable, technically we
     // could compress however we like. But we want to remain compatible with
     // https://github.com/w4kfu/unEXEPACK and other external EXEPACK unpackers,
-    // so we use the standard EXEPACK encoding: 0xb2 for a copy, 0xb0 for a
-    // fill, LSb == 1 to mark the end.
+    // so we use the standard EXEPACK encoding: 0xb2 for a Copy command, 0xb0
+    // for a Fill command, LSb == 1 to mark the final command.
     //
-    // The algorithm here uses dynamic programming. We define 3 states that the
-    // compressed stream may be in:
-    // * C ("copy") for a 0xb2/0xb3 block (copy the next len bytes)
-    // * F ("fill") for a 0xb0/0xb1 block (fill len copies of the next byte)
-    // * R ("runout") for the end of the stream after the last C or F block,
-    //   which is copied verbatim from the compressed input to the decompressed
-    //   output simply by virtue of remaining untouched in the buffer.
-    // For each input position i, we compute the minimum length of the
-    // compression of the first i bytes of the reversed input sequence. Assuming
-    // we know the values for index i-1, we compute the values for index i using
+    // The algorithm uses dynamic programming. We build three notional tables of
+    // costs. "Cost" is the minimum number of bytes needed to compress a prefix
+    // of the input:
+    //
+    //  * C[i] = the cost to compress input[..i], if we are in a Copy command at
+    //           index i.
+    //  * F[i] = the cost to compress input[..i], if we are in a Fill command at
+    //           index i.
+    //  * R[i] = the cost to compress input[..i], if we do not use any Copy or
+    //           Fill commands up to index i. The R stands for "runout".
+    //
+    // We start with fictitious table entries C[-1] = 0, F[-1] = 0, R[-1] = 0.
+    // We then fill out the rest of the table, working backwards, according to
     // the recurrences:
-    //      C[i] = min(
-    //          4 + F[i-1], // if we were in F, start a C block
-    //          1 + C[i-1], // if we were in C, continue the same C block
-    //      )
-    //      F[i] = min(
-    //          4 + C[i-1], // if we were in C, start an F block
-    //          0 + F[i-1], // if we were in F, stay in the same F block
-    //      )
-    //      R[i] = min(     // runout bytes always cost 1
-    //          1 + C[i-1],
-    //          1 + F[i-1],
-    //          1 + R[i-1],
-    //      )
-    // The transitions R→R R→C, R→F, C→C, C→F, F→F, F→C are valid, while C→R and
-    // F→R are not (once you leave the runout you can't go back to it;
-    // everything following has to be a C or F block). The actual formulas used
-    // in the code are a little more complicated because we also have to account
-    // for the fact that the length of each block is limited. For example, if a
-    // current C block is full, we can't append to it and instead have to start
-    // a new one.
+    //   C[i] = min(
+    //     // start a new Copy command: [input[i], 01, 00, b2]
+    //     min(C[i-1], F[i-1], R[i-1]) + 4,
+    //     // continue an existing Copy command (only if i > 0, and the command
+    //     // has length remaining)
+    //     C[i-1] + 1,
+    //   )
+    //   F[i] = min(
+    //     // start a new Fill command: [input[i], 01, 00, b0]
+    //     min(C[i-1], F[i-1], R[i-1]) + 4,
+    //     // continue an existing Fill command (only if i > 0, the command has
+    //     // length remaining, and input[i] == input[i-1])
+    //     F[i-1] + 0,
+    //   )
+    //   R[i] = i + 1     // if i < input.len() - 1
+    //       or i + 1 + 3 // if i == input.len() - 1
+    // The extra 3 in the final entry of the R table represents the fact that
+    // there must be at least one command in the compressed stream. If we find
+    // that the best way to compress the input is not to use any Copy or Fill
+    // commands at all, we must at least append a dummy 3-byte length-zero Copy
+    // command to give the decompressor something to work with.
     //
-    // Then we walk backwards through the minimum-cost tables. At each index i
-    // we choose whichever of C, F, and R has the lowest cost--with the
-    // restriction that once we have selected C or F once, we can never again
-    // select R. Then we jump i ahead by the length of the command, and repeat
-    // until we reach the beginning of the tables. In the case where we stayed
-    // in R throughout (i.e., an incompressible sequence), we tack on a dummy
-    // "copy 0" command at the end--in this case (the worst case) the compressed
-    // data are 3 bytes larger than the uncompressed.
+    // Along with every cost that we store in the C or F tables, we store the
+    // command length that got us that cost.
     //
-    // I'm not sure the algorithm used here is optimal with respect to the
-    // length of commands. In the 1-dimensional C and F tables I'm storing the
-    // single command length that led to the minimum cost at each position. A
-    // more complete consideration of cases would make each table 2-dimensional,
-    // indexed by input position and by command length. If there is a
-    // difference, it's likely to be minor.
+    // We then make a pass over the cost tables and decide on a command for each
+    // index, according to which table has the minimum cost at that index. Each
+    // Copy and Fill command has an associated length; Runout commands do not
+    // have a length. Call this array of commands CMD. Now CMD[input.len() - 1]
+    // tells us how we should start the compressed stream.
     //
-    // A greedy algorithm (that uses F for runs of 5 or longer, C otherwise) is
-    // not optimal. Consider the sequence
+    // We make a pass backward over the CMD table and remove the commands that
+    // don't actually get used in the final compressed stream. That means, we
+    // start at the end of CMD, and if we find a Copy(len) or Fill(len) command,
+    // skip over that many commands, then repeat. We quit when we hit the first
+    // Runout command, filling the remainder of the CMD array with Runouts.
+    //
+    // Finally, we pass forward over the reduced CMD array and emit code for
+    // each command. For a Runout, we just copy the corresponding byte from the
+    // input. For a Copy(len), we copy that many bytes from the input to the
+    // output, and append the length and command code. For a Fill(len), we copy
+    // the fill byte to the output, then append the length and the command code.
+    // In the event that we get to the end of the CMD array having only seen
+    // Runout commands, we emit an extra dummy Copy command.
+    //
+    // A greedy algorithm (one that uses Fill for runs of 5 or longer, Copy
+    // otherwise) is not optimal. Consider the sequence
     //      ... 01 02 03 04 05 cc cc cc cc cc 01 02 03 04 05
     // (Assume the left side doesn't enter runout.) A greedy compressor would
-    // compress it to
+    // compress it to 20 bytes:
     //      ... 01 02 03 04 05 05 00 b2 cc 05 00 b0 01 02 03 04 05 05 00 b2
-    // i.e., a C of length 5, then an F of length 5, then a C of length 5. But
-    // switching from C to F back to C again costs more than compressing the run
-    // of 5 cc's saves. A better compression is just one long C:
+    // i.e., a Copy of length 5, then a Fill of length 5, then a Copy of length
+    // 5. But switching from Copy to Fill back to Copy costs more than
+    // compressing the run of 5 cc's saves. A better compression is just one
+    // long Copy, 18 bytes total:
     //      ... 01 02 03 04 05 cc cc cc cc cc 01 02 03 04 05 0f 00 b2
     //
-    // We don't take advantage of every possible optimization. For example,
-    // suppose for a moment that the maximum length we can use is 6 rather than
-    // 0xffff. Consider the 7-byte sequence
+    // But this algorithm is not completely optimal either. We don't take
+    // advantage of certain optimizations involving self-referential or
+    // self-modifying code. For example, suppose for a moment that the maximum
+    // command length were 6 rather than 0xffff. Consider the 7-byte sequence
     //      cc cc cc cc cc cc cc
-    // We will compress this into 5 bytes as
+    // We will compress it into 5 bytes as
     //      cc cc 06 00 b1
-    // (i.e., fill 6×cc, then one runout cc). But we could save 1 additional
-    // byte by re-using one of the cc's both as a command parameter and a
-    // runout byte:
+    // (i.e., Fill(6) cc, then one Runout cc). But we could save 1 byte by
+    // re-using one of the cc's both as a command parameter and as a runout
+    // byte:
     //      cc 06 00 b1
     // For that matter, if we happened to get the 8-byte input
     //      cc 06 cc cc cc cc cc cc
     // we could re-use the 2 bytes cc 06 and compress as
     //      cc 06 00 b1
 
-    // The longest length of any command.
+    // The maximum length of a Copy or Fill command.
     const MAX_LEN: u16 = 0xffff;
+
+    #[derive(Clone, Copy)]
+    enum Command {
+        Copy(u16),
+        Fill(u16),
+        Runout,
+    }
+    let mut commands: Vec<Command> = Vec::with_capacity(input.len());
 
     // Stage 1: build the tables of costs and command lengths for each input
     // position.
 
-    // Allocate tables of costs (minimum compressed length) for each of C, F,
-    // and R; and additionally command lengths for C and F (R doesn't have
-    // command lengths). C[i+1].cost is the minimum length to compress up
-    // input[0..i] if we are in a C command at position i; likewise for F and R.
-    #[derive(Ord, PartialOrd, PartialEq, Eq)]
+    #[derive(Clone, Copy)]
     struct Entry {
-        cost: u32,
+        cost: usize,
         len: u16,
     }
-    #[allow(non_snake_case)]
-    let (mut C, mut F, mut R): (Vec<Entry>, Vec<Entry>, Vec<u32>) = (
-        Vec::with_capacity(input.len() + 1),
-        Vec::with_capacity(input.len() + 1),
-        Vec::with_capacity(input.len() + 1),
-    );
-    // The tables are 1 element longer than the input. The zeroth entry in each
-    // represents the "-1" index; i.e., the cost/length of compressing a
-    // zero-length input using each of the strategies.
-    C.push(Entry { cost: 3, len: 0 }); // 00 00 b1
-    F.push(Entry { cost: 4, len: 0 }); // XX 00 00 b3
-    // If we've done the whole input in the R state, we'll need to append a
-    // 00 00 b1 (just as in the C case), solely for the sake of giving the
-    // decompression routine a termination indicator.
-    R.push(3);                         // 00 00 b1
+    // Here is an optimization compared to the algorithm as described above.
+    // Because a recurrence for index i refers at most to index i-1, we don't
+    // have to remember the full C, F, and R tables. Instead we just remember
+    // the most recent value. At the top of each iteration of the following
+    // loop, copy.cost == C[i-1], fill.cost == F[i-1], and
+    // runout_cost == R[i-1]; and at the bottom of the loop, copy.cost == C[i],
+    // fill.cost == F[i], and runout_cost == R[i].
+    let mut copy = Entry { cost: 0, len: 0 };
+    let mut fill = Entry { cost: 0, len: 0 };
+    let mut runout_cost: usize = 0;
+    for i in 0..input.len() {
+        // prev_min_cost = min(C[i-1], F[i-1], R[i-1])
+        let prev_min_cost = copy.cost.min(fill.cost).min(runout_cost);
 
-    for j in (0..input.len()).rev() {
-        // j indexes input backwards from input.len()-1 to 0; i indexes the
-        // cost/length tables forward from 1 to input.len().
-        let i = input.len() - j;
-        // If we require byte j to be in a C command, then we either start a new
-        // C command here, or continue an existing C command.
-        let entry = cmp::min(
-            // If we previous byte was in an F, then it costs 4 bytes to start a
-            // C at this point.
-            Entry { cost: 4 + F[i - 1].cost, len: 1 },
-            // If we were already in a C command, we have the option of
-            // appending the current byte into the same command for an
-            // additional cost of 1--but only if its len does not exceed
-            // MAX_LEN. If it does, then we have to start a new C command at a
-            // cost of 4.
-            if C[i - 1].len < MAX_LEN {
-                Entry { cost: 1 + C[i - 1].cost, len: 1 + C[i - 1].len }
+        copy = [
+            // We always have the option of starting a new Copy command.
+            Some(Entry { cost: prev_min_cost + 4, len: 1 }),
+            // Or we may extend an existing Copy command, if its length is less
+            // than the maximum.
+            if i > 0 && copy.len < MAX_LEN {
+                Some(Entry { cost: copy.cost + 1, len: copy.len + 1 })
             } else {
-                Entry { cost: 4 + C[i - 1].cost, len: 1 }
-            }
-        );
-        // Push the minimum value to C[i].
-        C.push(entry);
+                None
+            },
+        ].into_iter().filter_map(|&x| x).min_by_key(|entry| entry.cost).unwrap();
 
-        // If we require byte j to be in an F command, then we either start a
-        // new F command here, or continue an existing F command.
-        let entry = cmp::min(
-            // If we previous byte was in a C, then it costs 4 bytes to start an
-            // F at this point.
-            Entry { cost: 4 + C[i - 1].cost, len: 1 },
-            // If we were already in a F command, we have the option of
-            // including the current byte in the same command for an additional
-            // cost of 0--but only if its len does not exceed MAX_LEN *and* the
-            // byte value is identical to the previous one (or we are at the
-            // first byte and there is no previous one yet). Otherwise, we need
-            // to start a new F command at a cost of 4.
-            if F[i - 1].len < MAX_LEN && (j == input.len() - 1 || input[j] == input[j + 1]) {
-                Entry { cost: 0 + F[i - 1].cost, len: 1 + F[i - 1].len }
+        fill = [
+            // We always have the option of starting a new Fill command.
+            Some(Entry { cost: prev_min_cost + 4, len: 1 }),
+            // Or we may extend an existing Copy command, if its length is less
+            // than the maximum and the current input byte is equal to the
+            // previous.
+            if i > 0 && input[i] == input[i - 1] && fill.len < MAX_LEN {
+                Some(Entry { cost: fill.cost + 0, len: fill.len + 1 })
             } else {
-                Entry { cost: 4 + F[i - 1].cost, len: 1 }
-            }
-        );
-        // Push the minimum value to F[i].
-        F.push(entry);
+                None
+            },
+        ].into_iter().filter_map(|&x| x).min_by_key(|entry| entry.cost).unwrap();
 
-        // Finally, if we require byte j to be in the R runout, the cost is 1
-        // greater than the minimum cost so far using any of C, F, or R (the
-        // cost of the verbatim byte itself). Note that we can switch from from
-        // C or F to R, but once in R there is no going back to C or F.
-        let cost = C[i - 1].cost.min(F[i - 1].cost).min(R[i - 1]) + 1;
-        // Push the minimum cost to R[i].
-        R.push(cost);
-    }
-
-    // Stage 2: trace back through the C, F, and R tables to recover the
-    // sequence of commands that lead to the minimum costs we computed.
-
-    enum Cmd {
-        C,
-        F,
-        R,
-    }
-    // The command currently in effect. We encode forwards, but the decompressor
-    // will run backwards. Start in the runout.
-    let mut cmd = Cmd::R;
-    // The first time we encode a C or F (i.e., when we get out of the runout),
-    // we need to set the LSb to indicate that it is the final command.
-    let mut is_final: u8 = 0x01;
-    let mut j = 0;
-    while j < input.len() {
-        // j indexes input from beginning to end; i indexes the cost/length
-        // tables from end to beginning.
-        let i = input.len() - j;
-        // We consult the C and F tables and see if either of them have a lower
-        // cost than the current command (which may be C, F, or R) at this
-        // index.
-        let mut cost = match cmd {
-            Cmd::C => C[i].cost,
-            Cmd::F => F[i].cost,
-            Cmd::R => R[i],
+        runout_cost = if i < input.len() - 1 {
+            i + 1
+        } else {
+            i + 1 + 3
         };
-        if C[i].cost < cost {
-            cost = C[i].cost;
-            cmd = Cmd::C;
-        }
-        if F[i].cost < cost {
-            cmd = Cmd::F;
-        }
 
-        // Now encode the command we've found to be the cheapest at this
-        // position.
-        match cmd {
-            Cmd::C => {
-                let len = C[i].len as usize;
-                output.extend(input[j..(j + len)].iter());
-                output.extend_from_slice(&u16::to_le_bytes(len as u16));
+        // Choose the command with the minimum cost and assign to CMD[i].
+        let (_, cmd) = [
+            (runout_cost, Command::Runout),
+            (copy.cost, Command::Copy(copy.len)),
+            (fill.cost, Command::Fill(fill.len)),
+        ].into_iter().cloned().min_by_key(|&(cost, _)| cost).unwrap();
+        commands.push(cmd);
+    }
+
+    // Stage 2: Retain only the commands that are reachable, starting from the
+    // end of CMD.
+
+    let mut commands_subset = Vec::new();
+    let mut i = commands.len();
+    while i > 0 {
+        let cmd_ref = &commands[i - 1];
+        match *cmd_ref {
+            Command::Copy(len) => i -= len as usize,
+            Command::Fill(len) => i -= len as usize,
+            Command::Runout => break,
+        }
+        commands_subset.push(cmd_ref);
+    }
+
+    // Stage 3: Output the remaining commands.
+
+    // i now points to the end of the runout. Another optimization here: we
+    // don't store a bunch of Runout commands at the beginning of
+    // commands_subset; we just memcpy the whole runout at once.
+    output.extend_from_slice(&input[..i]);
+
+    let mut is_final = 1;
+    // commands_subset is in decompression order (back to front), but we need to
+    // output it front to back.
+    for cmd in commands_subset.into_iter().rev() {
+        match *cmd {
+            Command::Copy(len) => {
+                output.extend_from_slice(&input[i..(i + len as usize)]);
+                output.extend_from_slice(&len.to_le_bytes());
                 output.push(0xb2 | is_final);
                 is_final = 0;
-                j += len;
+                i += len as usize;
             }
-            Cmd::F => {
-                let len = F[i].len as usize;
-                output.push(input[j]);
-                output.extend_from_slice(&u16::to_le_bytes(len as u16));
+            Command::Fill(len) => {
+                output.push(input[i]);
+                output.extend_from_slice(&len.to_le_bytes());
                 output.push(0xb0 | is_final);
                 is_final = 0;
-                j += len;
+                i += len as usize;
             }
-            Cmd::R => {
-                output.push(input[j]);
-                j += 1;
-            }
+            Command::Runout => panic!(),
         }
     }
-    assert_eq!(j, input.len());
-    // If we got all the way to the end and are still in the runout, then we
-    // need to append a dummy, zero-length C command for the sake of giving the
-    // decompression routine something to interpret. This is the worst case for
-    // an incompressible input, an expansion of 3 bytes.
-    if let Cmd::R = cmd {
-        output.push(0);
-        output.push(0);
-        assert_eq!(is_final, 1);
+    // If we got all the way to the end without emitting a Copy or Fill command,
+    // we must append a dummy command. This is the worst case for an
+    // incompressible input, an expansion of 3 bytes.
+    if is_final != 0 {
+        output.extend_from_slice(&0u16.to_le_bytes());
         output.push(0xb2 | is_final);
     }
 }
@@ -824,9 +807,9 @@ mod tests {
 
     #[test]
     fn test_decompress_srcoverflow() {
-        let inputs: &[&[u8]] = &[
+        for input in &[
             // empty buffer
-            &[],
+            &[] as &[u8],
             // EOF before reading length
             &[FILL|FINAL],
             &[COPY|FINAL],
@@ -838,8 +821,7 @@ mod tests {
             // EOF while reading copy body
             &[0x01, 0x00, COPY|FINAL],
             &[0xaa, 0xaa, 0x08, 0x00, COPY],
-        ];
-        for input in inputs {
+        ] {
             assert_eq!(decompress_new(input, input.len(), input.len()), Err(FormatError::SrcOverflow()), "{:?}", input);
         }
     }
@@ -859,11 +841,10 @@ mod tests {
 
     #[test]
     fn test_decompress_filloverflow() {
-        let inputs: &[(&[u8], usize)] = &[
-            (&[0xaa, 0x01, 0x00, FILL|FINAL], 0),
+        for &(input, dst) in &[
+            (&[0xaa, 0x01, 0x00, FILL|FINAL] as &[u8], 0),
             (&[0xaa, 0x10, 0x00, FILL|FINAL], 15),
-        ];
-        for &(input, dst) in inputs {
+        ] {
             let src = input.len();
             let mut work = input.to_vec();
             work.resize(cmp::max(src, dst), 0);
@@ -876,11 +857,10 @@ mod tests {
 
     #[test]
     fn test_decompress_copyoverflow() {
-        let inputs: &[(&[u8], usize)] = &[
-            (&[0xaa, 0x01, 0x00, COPY|FINAL], 0),
+        for &(input, dst) in &[
+            (&[0xaa, 0x01, 0x00, COPY|FINAL] as &[u8], 0),
             (&[0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0x05, 0x00, COPY|FINAL], 2),
-        ];
-        for &(input, dst) in inputs {
+        ] {
             let src = input.len();
             let mut work = input.to_vec();
             work.resize(cmp::max(src, dst), 0);
@@ -893,12 +873,11 @@ mod tests {
 
     #[test]
     fn test_decompress_gap() {
-        let inputs: &[(&[u8], usize)] = &[
-            (&[0x00, 0x00, COPY|FINAL], 4),
+        for &(input, dst) in &[
+            (&[0x00, 0x00, COPY|FINAL] as &[u8], 4),
             (&[0xaa, 0x01, 0x00, COPY|FINAL], 6),
             (&[0xaa, 0x10, 0x00, FILL|FINAL], 21),
-        ];
-        for &(input, dst) in inputs {
+        ] {
             let src = input.len();
             let mut work = input.to_vec();
             work.resize(cmp::max(src, dst), 0);
@@ -911,9 +890,9 @@ mod tests {
 
     #[test]
     fn test_decompress_ok() {
-        let inputs: &[(&[u8], usize, &[u8])] = &[
-            (&[0x01, 0x02, 0x03, 0x04, 0x05, 0x05, 0x00, COPY|FINAL], 5,
-             &[0x01, 0x02, 0x03, 0x04, 0x05]),
+        for &(input, dst, output) in &[
+            (&[0x01u8, 0x02, 0x03, 0x04, 0x05, 0x05, 0x00, COPY|FINAL] as &[u8], 5,
+             &[0x01u8, 0x02, 0x03, 0x04, 0x05] as &[u8]),
             (&[0x01, 0x02, 0x03, 0x04, 0x05, 0x02, 0x00, COPY|FINAL], 5,
              &[0x01, 0x02, 0x03, 0x04, 0x05]),
             (&[0x01, 0x02, 0x03, 0x04, 0x05, 0x02, 0x00, COPY|FINAL], 2,
@@ -930,8 +909,7 @@ mod tests {
              &[0x01, 0x02, 0x03]),
             (&[0x01, 0x02, 0x02, 0x00, COPY|FINAL, 0x00, 0x00, COPY], 5,
              &[0x01, 0x02, 0x02, 0x01, 0x02]),
-        ];
-        for &(input, dst, output) in inputs {
+        ] {
             let src = input.len();
             let mut work = input.to_vec();
             work.resize(cmp::max(src, dst), 0);
@@ -941,8 +919,8 @@ mod tests {
 
     #[test]
     fn test_compress_roundtrip() {
-        let inputs: &[&[u8]] = &[
-            &[],
+        for input in &[
+            &[] as &[u8],
             &[1],
             &[1, 2, 3, 4, 5],
             &[1, 2, 3, 4, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 1, 2, 3, 4],
@@ -957,14 +935,34 @@ mod tests {
             &[0xff; 0xffff+2],
             &[0xff; 0xff10+2],
             &[0xff; 0xffff*2],
-        ];
-        for input in inputs {
+        ] {
             let mut work = Vec::new();
             compress(&mut work, input);
             let compressed_len = work.len();
             work.resize(cmp::max(compressed_len, input.len()), 0);
             decompress(&mut work, input.len(), compressed_len).unwrap();
-            assert_eq!(&&work[0..input.len()], input);
+        }
+    }
+
+    // Test that compress gets below certain thresholds for certain inputs.
+    #[test]
+    fn test_compress_density() {
+        for (ordering, limit, input) in &[
+            // empty input should compress to a length-zero Copy
+            (cmp::Ordering::Equal, 3, &[] as &[u8]),
+            // Fill command and Copy command are equal
+            (cmp::Ordering::Equal, 4, &[1]),
+            // should use a Fill command instead of a Copy command
+            // an implementation may erroneously use a Copy here if not counting
+            // the 3 bytes of the dummy copy after a runout
+            (cmp::Ordering::Equal, 4, &[1, 1]),
+            // cheaper to do the latter part as a long Copy instead of switching
+            // Copy, Fill, Copy, Fill
+            (cmp::Ordering::Less, 23, &[9, 9, 9, 9, 9, 9, 9, 9, 1, 2, 3, 4, 5, 9, 9, 9, 9, 9, 1, 2, 3, 4, 5]),
+        ] {
+            let mut work = Vec::new();
+            compress(&mut work, &input);
+            assert_eq!(work.len().cmp(limit), *ordering, "{} {:?}", work.len(), work);
         }
     }
 }
