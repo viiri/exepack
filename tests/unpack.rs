@@ -116,45 +116,6 @@ fn test_short_exepack_size() {
     }
 }
 
-// We don't ask for perfect identity in comparing EXEs. The packing/unpacking
-// roundtrip may change the size of the header, and may add padding to the end
-// of the body. The location of the relocation table may change.
-fn check_exes_equivalent(a: &exe::Exe, b: &exe::Exe) {
-    // Let a be the one with the shorter body.
-    let (a, b) = if a.body.len() <= b.body.len() {
-        (a, b)
-    } else {
-        (b, a)
-    };
-
-    assert_eq!(a.e_minalloc, b.e_minalloc);
-    assert_eq!(a.e_maxalloc, b.e_maxalloc);
-    assert_eq!(a.e_ss, b.e_ss);
-    assert_eq!(a.e_sp, b.e_sp);
-    assert_eq!(a.e_ip, b.e_ip);
-    assert_eq!(a.e_cs, b.e_cs);
-    assert_eq!(a.e_ovno, b.e_ovno);
-
-    let diff = (isize::try_from(b.body.len()).unwrap())
-        .checked_sub(isize::try_from(a.body.len()).unwrap()).unwrap();
-    // should not add more than 15 bytes of padding
-    assert!(0 <= diff && diff < 16, "{} {}", a.body.len(), b.body.len());
-    let (b_body, b_padding) = b.body.split_at(a.body.len());
-    // body up to padding must be identical
-    assert_eq!(a.body, b_body);
-    // padding must be zeroed
-    for c in b_padding {
-        assert_eq!(*c, 0x00, "{:?}", b_padding);
-    }
-
-    // relocations must be identical up to order
-    let mut a_relocs = a.relocs.clone();
-    a_relocs.sort();
-    let mut b_relocs = a.relocs.clone();
-    b_relocs.sort();
-    assert_eq!(a_relocs, b_relocs);
-}
-
 // The message can be other than "Packed file is corrupt"
 #[test]
 fn test_altered_message() {
@@ -170,7 +131,7 @@ fn test_altered_message() {
             message_buf.copy_from_slice(&message[..]);
         }
         common::maybe_save_exe(format!("tests/exepack_message_{}.exe", str::replace(str::from_utf8(&message[..]).unwrap(), " ", "_")), &sample).unwrap();
-        check_exes_equivalent(&original, &exepack::unpack(&sample).unwrap());
+        common::assert_exes_equivalent(&original, &exepack::unpack(&sample).unwrap());
     }
 }
 
@@ -181,7 +142,7 @@ fn test_trailing_garbage() {
     let mut sample = packed_sample();
     sample.body.extend(iter::repeat(b'X').take(64));
     common::maybe_save_exe("tests/exe_trailing_garbage.exe", &sample).unwrap();
-    check_exes_equivalent(&original, &exepack::unpack(&sample).unwrap());
+    common::assert_exes_equivalent(&original, &exepack::unpack(&sample).unwrap());
 
     // but if it's inside exepack_size, it means the relocation table was not as
     // long as we thought it should be, so we may have guessed the end of the
@@ -222,7 +183,7 @@ fn test_skip_len() {
         // insert skip padding
         sample.body.splice(start..start, iter::repeat(0xaa).take(16 * usize::from(skip_len - 1)));
         common::maybe_save_exe(format!("tests/exepack_skip_len_{}_good.exe", skip_len), &sample).unwrap();
-        check_exes_equivalent(&original, &exepack::unpack(&sample).unwrap());
+        common::assert_exes_equivalent(&original, &exepack::unpack(&sample).unwrap());
     }
 
     // skip_len that doesn't agree with cs and dest_len is an error

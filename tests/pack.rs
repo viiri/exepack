@@ -1,4 +1,3 @@
-use std::convert::TryFrom;
 use std::fs;
 use std::iter;
 
@@ -200,44 +199,6 @@ fn test_lengths() {
     want_error!(exepack::pack(&exe));
 }
 
-// We don't ask for perfect identity in comparing EXEs. The packing/unpacking
-// roundtrip may change the size of the header, and may add padding to the end
-// of the body. The location of the relocation table may change. We don't check
-// the checksums.
-fn check_exes_equivalent_count(count: usize, a: &exe::Exe, b: &exe::Exe) {
-    // Let a be the one with the shorter body.
-    let (a, b) = if a.body.len() <= b.body.len() {
-        (a, b)
-    } else {
-        (b, a)
-    };
-
-    assert_eq!(a.e_minalloc, b.e_minalloc, "{}", count);
-    assert_eq!(a.e_maxalloc, b.e_maxalloc, "{}", count);
-    assert_eq!(a.e_ss, b.e_ss, "{}", count);
-    assert_eq!(a.e_sp, b.e_sp, "{}", count);
-    assert_eq!(a.e_ip, b.e_ip, "{}", count);
-    assert_eq!(a.e_cs, b.e_cs, "{}", count);
-    assert_eq!(a.e_ovno, b.e_ovno, "{}", count);
-
-    let diff = (isize::try_from(b.body.len()).unwrap())
-        .checked_sub(isize::try_from(a.body.len()).unwrap()).unwrap();
-    // should not add more than 15 bytes of padding
-    assert!(0 <= diff && diff < 16, "{} {} {}", a.body.len(), b.body.len(), count);
-    let (b_body, b_padding) = b.body.split_at(a.body.len());
-    // body up to padding must be identical
-    assert_eq!(a.body, b_body, "{}", count);
-    // padding must be zeroed
-    assert!(b_padding.iter().all(|&c| c == 0x00), "{:?} {}", b_padding, count);
-
-    // relocations must be identical up to order
-    let mut a_relocs = a.relocs.clone();
-    a_relocs.sort();
-    let mut b_relocs = a.relocs.clone();
-    b_relocs.sort();
-    assert_eq!(a_relocs, b_relocs, "{}", count);
-}
-
 fn pack_roundtrip_count(count: usize, max: usize, exe: exe::Exe) -> exe::Exe {
     if count + 1 > max {
         return exe;
@@ -246,7 +207,11 @@ fn pack_roundtrip_count(count: usize, max: usize, exe: exe::Exe) -> exe::Exe {
     common::maybe_save_exe(format!("tests/hello_roundtrip_{}.packed.exe", count + 1), &packed).unwrap();
     let unpacked = exepack::unpack(&packed).unwrap();
     common::maybe_save_exe(format!("tests/hello_roundtrip_{}.unpacked.exe", count), &unpacked).unwrap();
-    check_exes_equivalent_count(count, &exe, &unpacked);
+    if std::panic::catch_unwind(|| {
+        common::assert_exes_equivalent(&exe, &unpacked);
+    }).is_err() {
+        panic!("unequal at depth {}", count);
+    }
     unpacked
 }
 
