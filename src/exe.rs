@@ -8,7 +8,7 @@
 use std::convert::TryFrom;
 use std::convert::TryInto;
 use std::fmt;
-use std::io::{self, prelude::*};
+use std::io::{self, Read, Write};
 
 use pointer::Pointer;
 

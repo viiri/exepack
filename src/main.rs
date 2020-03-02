@@ -1,28 +1,29 @@
-//! exepack does compression and decompression of DOS executables with Microsoft
-//! EXEPACK.
-//!
-//! For information about the format, see
-//! <http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK>.
+//! exepack does compression and decompression of DOS executables in the
+//! Microsoft EXEPACK format.
 //!
 //! # Compression
 //!
-//! ```ignore
+//! ```sh
 //! exepack input.exe packed.exe
 //! ```
 //!
 //! # Decompression
 //!
-//! ```ignore
+//! ```sh
 //! exepack -d input.exe unpacked.exe
 //! ```
 //!
 //! # Exit status
 //!
 //! Exit status is 0 if there was no error, or 1 if there was any kind of error
-//! (e.g., I/O, EXE parsing, EXEPACK decompression).
+//! (I/O error, EXE file format error, or EXEPACK format error).
+//!
+//! # References
+//!
+//! * <http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK>.
 
 use std::env;
-use std::fmt;
+use std::fmt::{self, Write as _};
 use std::fs::File;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -35,10 +36,14 @@ mod pointer;
 #[cfg(test)]
 mod tests;
 
+/// An error that may occur while manipulating an EXE file.
 #[derive(Debug)]
 enum Error {
+    /// An I/O error.
     Io(io::Error),
+    /// An EXE file format error.
     Exe(exe::FormatError),
+    /// An EXEPATK format error.
     Exepack(exepack::FormatError),
 }
 
@@ -75,31 +80,32 @@ impl From<exepack::FormatError> for Error {
     }
 }
 
+/// An `Error` annotated with a `Path`.
 #[derive(Debug)]
-struct TopLevelError {
+struct PathError {
     path: Option<PathBuf>,
     err: Error,
 }
 
-impl std::error::Error for TopLevelError {}
+impl PathError {
+    fn new<P: AsRef<Path>>(path: P, err: Error) -> Self {
+        let path = path.as_ref().to_owned();
+        Self { path: Some(path), err }
+    }
+}
 
-impl fmt::Display for TopLevelError {
+impl std::error::Error for PathError {}
+
+impl fmt::Display for PathError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            TopLevelError { path: None, err } => err.fmt(f),
-            TopLevelError { path: Some(path), err } => write!(f, "{}: {}", path.display(), err),
+            PathError { path: None, err } => err.fmt(f),
+            PathError { path: Some(path), err } => write!(f, "{}: {}", path.display(), err),
         }
     }
 }
 
-fn write_exe_file<P: AsRef<Path>>(path: P, exe: &exe::Exe) -> Result<u64, Error> {
-    let f = File::create(&path)?;
-    let mut f = io::BufWriter::new(f);
-    let n = exe.write(&mut f)?;
-    f.flush()?;
-    Ok(n)
-}
-
+/// Calls `exepack::pack` on the EXE file named by `path`.
 fn pack_file<P: AsRef<Path>>(path: P) -> Result<exe::Exe, Error> {
     let f = File::open(&path)?;
     let file_len = f.metadata()?.len();
@@ -109,25 +115,7 @@ fn pack_file<P: AsRef<Path>>(path: P) -> Result<exe::Exe, Error> {
     Ok(exe)
 }
 
-fn compress_mode<P: AsRef<Path>>(input_path: P, output_path: P) -> Result<(), TopLevelError> {
-    let exe = match pack_file(&input_path) {
-        Err(err) => return Err(TopLevelError {
-            path: Some(input_path.as_ref().to_path_buf()),
-            err: err,
-        }),
-        Ok(f) => f,
-    };
-
-    if let Err(err) = write_exe_file(&output_path, &exe) {
-        return Err(TopLevelError {
-            path: Some(output_path.as_ref().to_path_buf()),
-            err: err,
-        });
-    }
-
-    Ok(())
-}
-
+/// Calls `exepack::unpack` on the EXE file named by `path`.
 fn unpack_file<P: AsRef<Path>>(path: P) -> Result<exe::Exe, Error> {
     let f = File::open(&path)?;
     let file_len = f.metadata()?.len();
@@ -136,37 +124,47 @@ fn unpack_file<P: AsRef<Path>>(path: P) -> Result<exe::Exe, Error> {
     exepack::unpack(&exe).map_err(|err| From::from(err))
 }
 
-fn decompress_mode<P: AsRef<Path>>(input_path: P, output_path: P) -> Result<(), TopLevelError> {
-    let exe = match unpack_file(&input_path) {
-        Err(err) => return Err(TopLevelError {
-            path: Some(input_path.as_ref().to_path_buf()),
-            err: err,
-        }),
-        Ok(f) => f,
-    };
+/// Writes an EXE to a file named by `path`.
+fn write_exe_file<P: AsRef<Path>>(path: P, exe: &exe::Exe) -> Result<u64, Error> {
+    let f = File::create(&path)?;
+    let mut f = io::BufWriter::new(f);
+    let n = exe.write(&mut f)?;
+    f.flush()?;
+    Ok(n)
+}
 
-    if let Err(err) = write_exe_file(&output_path, &exe) {
-        return Err(TopLevelError {
-            path: Some(output_path.as_ref().to_path_buf()),
-            err: err,
-        });
-    }
-
+/// Reads an EXE from `input_path`, compresses it, and writes the compressed EXE
+/// to `output_path`.
+fn compress_mode<P, Q>(input_path: P, output_path: Q) -> Result<(), PathError>
+    where P: AsRef<Path>, Q: AsRef<Path>,
+{
+    let exe = pack_file(&input_path)
+        .map_err(|err| PathError::new(&input_path, err))?;
+    write_exe_file(&output_path, &exe)
+        .map_err(|err| PathError::new(&output_path, err))?;
     Ok(())
 }
 
+/// Reads an EXE from `input_path`, decompresses it, and writes the decompressed
+/// EXE to `output_path`.
+fn decompress_mode<P, Q>(input_path: P, output_path: Q) -> Result<(), PathError>
+    where P: AsRef<Path>, Q: AsRef<Path>,
+{
+    let exe = unpack_file(&input_path)
+        .map_err(|err| PathError::new(&input_path, err))?;
+    write_exe_file(&output_path, &exe)
+        .map_err(|err| PathError::new(&output_path, err))?;
+    Ok(())
+}
+
+/// A byte string found in most EXEPACK decompression stubs.
 const EXEPACK_ERRMSG: &[u8] = b"Packed file is corrupt";
 
-// Return whether the given slice contains EXEPACK_ERRMSG, and is therefore
-// likely an EXEPACK decompression stub.
+/// Returns whether the given slice contains `EXEPACK_ERRMSG`, and is therefore
+/// likely to be an EXEPACK decompression stub.
 fn stub_resembles_exepack(stub: &[u8]) -> bool {
     // No equivalent of str::contains for &[u8]...
-    for window in stub.windows(EXEPACK_ERRMSG.len()) {
-        if window == EXEPACK_ERRMSG {
-            return true;
-        }
-    }
-    false
+    stub.windows(EXEPACK_ERRMSG.len()).any(|window| window == EXEPACK_ERRMSG)
 }
 
 #[test]
@@ -178,19 +176,23 @@ fn test_stub_resembles_exepack() {
     assert_eq!(stub_resembles_exepack(b"XXPacked file is corruptXXPacked file is corruptXX"), true);
 }
 
+/// Converts `buf` into a backslash-escaped ASCII-safe string without
+/// whitespace.
 fn escape(buf: &[u8]) -> String {
     let mut s = String::new();
     for &c in buf {
         if c.is_ascii_alphanumeric() {
-            s.push(c as char)
+            s.push(c.into())
         } else {
-            s.push_str(&format!("\\x{:02x}", c))
+            write!(s, "\\x{:02x}", c).unwrap()
         }
     }
     s
 }
 
-fn write_escaped_stub_for_submission<W: Write>(
+/// Writes `exepack_header_buffer` and `stub` to `w` in an ASCII-safe,
+/// reversible format.
+fn write_escaped_stub_for_submission<W: Write + ?Sized>(
     w: &mut W,
     exepack_header_buffer: &[u8],
     stub: &[u8]
@@ -207,7 +209,9 @@ fn write_escaped_stub_for_submission<W: Write>(
     Ok(())
 }
 
-fn display_unknown_stub<W: Write>(
+/// Display an error message for an unknown decompression stub, including an
+/// invitation to submit it if it really appears to be EXEPACK.
+fn display_unknown_stub<W: Write + ?Sized>(
     w: &mut W,
     exepack_header_buffer: &[u8],
     stub: &[u8]
@@ -233,7 +237,8 @@ page of code. Is it really EXEPACK?\n",
     Ok(())
 }
 
-fn print_usage<W: Write>(w: &mut W, opts: getopts::Options) -> io::Result<()> {
+/// Print a usage message to `w`.
+fn print_usage<W: Write + ?Sized>(w: &mut W, opts: getopts::Options) -> io::Result<()> {
     let brief = format!("\
 Usage: {} [OPTION]... INPUT.EXE OUTPUT.EXE\n\
 Compress or decompress a DOS EXE executable with EXEPACK.",

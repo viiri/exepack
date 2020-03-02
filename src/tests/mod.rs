@@ -1,7 +1,7 @@
 use std::convert::TryInto;
 use std::env;
 use std::fs;
-use std::io::{self, prelude::*};
+use std::io::{self, Write};
 use std::path;
 
 mod pack;

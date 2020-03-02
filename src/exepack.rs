@@ -38,7 +38,7 @@
 use std::cmp;
 use std::convert::TryInto;
 use std::fmt;
-use std::io::{self, prelude::*};
+use std::io::{self, Read};
 
 use exe;
 use pointer::Pointer;
