@@ -116,13 +116,13 @@ fn write_u16le<W: Write + ?Sized>(w: &mut W, v: u16) -> io::Result<u64> {
 /// Reads and discards `n` bytes from `r`. Returns an error of the kind
 /// `io::ErrorKind::UnexpectedEof` if EOF occurs before `n` bytes can be read.
 fn discard<R: Read + ?Sized>(r: &mut R, n: u64) -> io::Result<u64> {
-    io::copy(&mut r.take(n), &mut io::sink()).and_then(|count|
+    io::copy(&mut r.take(n), &mut io::sink()).and_then(|count| {
         if count == n {
             Ok(count)
         } else {
             Err(io::Error::new(io::ErrorKind::UnexpectedEof, format!("{}", count)))
         }
-    )
+    })
 }
 
 /// Converts a `(e_cblp, e_cp)` tuple into a single length value. Returns `None`
@@ -352,7 +352,7 @@ mod tests {
     use std::path;
 
     fn store_u16le(buf: &mut [u8], i: usize, v: u16) {
-        buf[i..i+2].clone_from_slice(&u16::to_le_bytes(v));
+        buf[i..i + 2].clone_from_slice(&u16::to_le_bytes(v));
     }
 
     #[test]
@@ -419,8 +419,8 @@ mod tests {
         assert_eq!(decode_exe_len(511, 1), Some(511));
         assert_eq!(decode_exe_len(0, 1), Some(512));
         assert_eq!(decode_exe_len(1, 2), Some(513));
-        assert_eq!(decode_exe_len(511, 0xffff), Some(0xffff*512-1));
-        assert_eq!(decode_exe_len(0, 0xffff), Some(0xffff*512));
+        assert_eq!(decode_exe_len(511, 0xffff), Some(0xffff * 512 - 1));
+        assert_eq!(decode_exe_len(0, 0xffff), Some(0xffff * 512));
 
         // When e_cp == 0, e_cblp must be 0, otherwise it would encode a negative
         // length.

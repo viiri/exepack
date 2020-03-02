@@ -116,7 +116,7 @@ fn test_lengths() {
     macro_rules! want_error {
         ($r:expr) => {
             assert!($r.is_err(), $r);
-        }
+        };
     }
 
     // Size of an EXEPACK block with no relocations.

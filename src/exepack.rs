@@ -387,8 +387,7 @@ fn unpad(buf: &[u8], i: usize) -> usize {
 /// # References
 ///
 /// * <http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK#Decompression_algorithm>
-fn decompress(buf: &mut Vec<u8>, compressed_len: usize, uncompressed_len: usize)
--> Result<(), FormatError> {
+fn decompress(buf: &mut Vec<u8>, compressed_len: usize, uncompressed_len: usize) -> Result<(), FormatError> {
     let mut src = compressed_len;
     let mut dst = uncompressed_len;
 
@@ -407,7 +406,7 @@ fn decompress(buf: &mut Vec<u8>, compressed_len: usize, uncompressed_len: usize)
 
         // Read the 16-bit length.
         src = src.checked_sub(2).ok_or(FormatError::SrcOverflow)?;
-        let length = usize::from(u16::from_le_bytes(buf[src..src+2].try_into().unwrap()));
+        let length = usize::from(u16::from_le_bytes(buf[src..src + 2].try_into().unwrap()));
 
         match command & 0xfe {
             0xb0 => {
@@ -691,13 +690,13 @@ fn parse_relocs(buf: &[u8]) -> Option<(usize, Vec<Pointer>)> {
         if i + 2 > buf.len() {
             return None;
         }
-        let num_relocs = u16::from_le_bytes(buf[i..i+2].try_into().unwrap());
+        let num_relocs = u16::from_le_bytes(buf[i..i + 2].try_into().unwrap());
         i += 2;
         for _ in 0..num_relocs {
             if i + 2 > buf.len() {
                 return None;
             }
-            let offset = u16::from_le_bytes(buf[i..i+2].try_into().unwrap());
+            let offset = u16::from_le_bytes(buf[i..i + 2].try_into().unwrap());
             i += 2;
             relocs.push(Pointer {
                 segment: segment * 0x1000,
@@ -853,15 +852,15 @@ mod tests {
             // empty buffer
             &[] as &[u8],
             // EOF before reading length
-            &[FILL|FINAL],
-            &[COPY|FINAL],
+            &[FILL | FINAL],
+            &[COPY | FINAL],
             // EOF while reading length
-            &[0x12, FILL|FINAL],
-            &[0x12, COPY|FINAL],
+            &[0x12, FILL | FINAL],
+            &[0x12, COPY | FINAL],
             // EOF before reading fill byte
-            &[0x00, 0x00, FILL|FINAL],
+            &[0x00, 0x00, FILL | FINAL],
             // EOF while reading copy body
-            &[0x01, 0x00, COPY|FINAL],
+            &[0x01, 0x00, COPY | FINAL],
             &[0xaa, 0xaa, 0x08, 0x00, COPY],
         ] {
             assert_eq!(decompress_new(input, input.len(), input.len()), Err(FormatError::SrcOverflow), "{:?}", input);
@@ -871,27 +870,27 @@ mod tests {
     #[test]
     fn test_decompress_crossover() {
         // dst overwrites src with something bogus
-        assert_eq!(decompress_new(&[0x00, 0x00, COPY|FINAL, 0xaa, 0x07, 0x00, FILL, 0xff, 0xff], 7, 9),
+        assert_eq!(decompress_new(&[0x00, 0x00, COPY | FINAL, 0xaa, 0x07, 0x00, FILL, 0xff, 0xff], 7, 9),
                    Err(FormatError::UnknownCommand { src: 2, command: 0xaa }));
-        assert_eq!(decompress_new(&[0x00, 0x00, COPY|FINAL, 0xaa, 0x07, 0x00, FILL, 0xff], 7, 8),
+        assert_eq!(decompress_new(&[0x00, 0x00, COPY | FINAL, 0xaa, 0x07, 0x00, FILL, 0xff], 7, 8),
                    Err(FormatError::UnknownCommand { src: 2, command: 0xaa }));
-        assert_eq!(decompress_new(&[0x00, 0x00, COPY|FINAL, 0xaa, 0x07, 0x00, FILL], 7, 7),
+        assert_eq!(decompress_new(&[0x00, 0x00, COPY | FINAL, 0xaa, 0x07, 0x00, FILL], 7, 7),
                    Err(FormatError::UnknownCommand { src: 2, command: 0xaa }));
-        assert_eq!(decompress_new(&[0x00, 0x00, COPY|FINAL, 0xaa, 0x01, 0x00, COPY], 7, 3),
+        assert_eq!(decompress_new(&[0x00, 0x00, COPY | FINAL, 0xaa, 0x01, 0x00, COPY], 7, 3),
                    Err(FormatError::UnknownCommand { src: 2, command: 0xaa }));
 
         // dst overwrites src with a valid command
-        assert_eq!(decompress_new(&[0xaa, 0x01, 0x00, 0xff, COPY|FINAL, 0x01, 0x00, FILL], 8, 4),
-                   Ok(vec![0xaa, 0x01, 0xaa, COPY|FINAL]));
-        assert_eq!(decompress_new(&[0xff, 0xff, 0xff, 0xff, 0xff, 0xaa, 0x01, 0x00, COPY|FINAL, 0x04, 0x00, COPY], 12, 5),
-                   Ok(vec![0xaa, 0xaa, 0x01, 0x00, COPY|FINAL]));
+        assert_eq!(decompress_new(&[0xaa, 0x01, 0x00, 0xff, COPY | FINAL, 0x01, 0x00, FILL], 8, 4),
+                   Ok(vec![0xaa, 0x01, 0xaa, COPY | FINAL]));
+        assert_eq!(decompress_new(&[0xff, 0xff, 0xff, 0xff, 0xff, 0xaa, 0x01, 0x00, COPY | FINAL, 0x04, 0x00, COPY], 12, 5),
+                   Ok(vec![0xaa, 0xaa, 0x01, 0x00, COPY | FINAL]));
     }
 
     #[test]
     fn test_decompress_filloverflow() {
         for &(input, dst) in &[
-            (&[0xaa, 0x01, 0x00, FILL|FINAL] as &[u8], 0),
-            (&[0xaa, 0x10, 0x00, FILL|FINAL], 15),
+            (&[0xaa, 0x01, 0x00, FILL | FINAL] as &[u8], 0),
+            (&[0xaa, 0x10, 0x00, FILL | FINAL], 15),
         ] {
             match decompress_new(input, input.len(), dst) {
                 Err(FormatError::FillOverflow { fill: 0xaa, .. }) => (),
@@ -903,8 +902,8 @@ mod tests {
     #[test]
     fn test_decompress_copyoverflow() {
         for &(input, dst) in &[
-            (&[0xaa, 0x01, 0x00, COPY|FINAL] as &[u8], 0),
-            (&[0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0x05, 0x00, COPY|FINAL], 2),
+            (&[0xaa, 0x01, 0x00, COPY | FINAL] as &[u8], 0),
+            (&[0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0x05, 0x00, COPY | FINAL], 2),
         ] {
             match decompress_new(input, input.len(), dst) {
                 Err(FormatError::CopyOverflow { .. }) => (),
@@ -916,9 +915,9 @@ mod tests {
     #[test]
     fn test_decompress_gap() {
         for &(input, dst) in &[
-            (&[0x00, 0x00, COPY|FINAL] as &[u8], 4),
-            (&[0xaa, 0x01, 0x00, COPY|FINAL], 6),
-            (&[0xaa, 0x10, 0x00, FILL|FINAL], 21),
+            (&[0x00, 0x00, COPY | FINAL] as &[u8], 4),
+            (&[0xaa, 0x01, 0x00, COPY | FINAL], 6),
+            (&[0xaa, 0x10, 0x00, FILL | FINAL], 21),
         ] {
             match decompress_new(input, input.len(), dst) {
                 Err(FormatError::Gap { .. }) => (),
@@ -930,23 +929,23 @@ mod tests {
     #[test]
     fn test_decompress_ok() {
         for &(input, dst, output) in &[
-            (&[0x01u8, 0x02, 0x03, 0x04, 0x05, 0x05, 0x00, COPY|FINAL] as &[u8], 5,
+            (&[0x01u8, 0x02, 0x03, 0x04, 0x05, 0x05, 0x00, COPY | FINAL] as &[u8], 5,
              &[0x01u8, 0x02, 0x03, 0x04, 0x05] as &[u8]),
-            (&[0x01, 0x02, 0x03, 0x04, 0x05, 0x02, 0x00, COPY|FINAL], 5,
+            (&[0x01, 0x02, 0x03, 0x04, 0x05, 0x02, 0x00, COPY | FINAL], 5,
              &[0x01, 0x02, 0x03, 0x04, 0x05]),
-            (&[0x01, 0x02, 0x03, 0x04, 0x05, 0x02, 0x00, COPY|FINAL], 2,
+            (&[0x01, 0x02, 0x03, 0x04, 0x05, 0x02, 0x00, COPY | FINAL], 2,
              &[0x04, 0x05]),
-            (&[0xaa, 0x04, 0x00, FILL|FINAL], 4,
+            (&[0xaa, 0x04, 0x00, FILL | FINAL], 4,
              &[0xaa, 0xaa, 0xaa, 0xaa]),
             // allow reuse of src bytes, even if they are command bytes
-            (&[0x00, 0x00, COPY|FINAL, 0xaa, 0x07, 0x00, FILL], 10,
-             &[0x00, 0x00, COPY|FINAL, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa]),
-            (&[0xaa, 0x04, 0x00, FILL|FINAL], 8,
-             &[0xaa, 0x04, 0x00, FILL|FINAL, 0xaa, 0xaa, 0xaa, 0xaa]),
+            (&[0x00, 0x00, COPY | FINAL, 0xaa, 0x07, 0x00, FILL], 10,
+             &[0x00, 0x00, COPY | FINAL, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa]),
+            (&[0xaa, 0x04, 0x00, FILL | FINAL], 8,
+             &[0xaa, 0x04, 0x00, FILL | FINAL, 0xaa, 0xaa, 0xaa, 0xaa]),
             // allow dst < src for the first command only.
-            (&[0x01, 0x02, 0x03, 0x00, 0x00, COPY|FINAL], 3,
+            (&[0x01, 0x02, 0x03, 0x00, 0x00, COPY | FINAL], 3,
              &[0x01, 0x02, 0x03]),
-            (&[0x01, 0x02, 0x02, 0x00, COPY|FINAL, 0x00, 0x00, COPY], 5,
+            (&[0x01, 0x02, 0x02, 0x00, COPY | FINAL, 0x00, 0x00, COPY], 5,
              &[0x01, 0x02, 0x02, 0x01, 0x02]),
         ] {
             assert_eq!(&decompress_new(input, input.len(), dst).unwrap(), &output);
@@ -965,12 +964,12 @@ mod tests {
             // try compressing command codes themselves
             &[FILL, FILL, FILL, FILL, FILL, FILL, FILL, FILL],
             &[COPY, COPY, COPY, COPY, COPY, COPY, COPY, COPY],
-            &[FILL|FINAL, FILL|FINAL, FILL|FINAL, FILL|FINAL, FILL|FINAL, FILL|FINAL, FILL|FINAL, FILL|FINAL],
-            &[COPY|FINAL, COPY|FINAL, COPY|FINAL, COPY|FINAL, COPY|FINAL, COPY|FINAL, COPY|FINAL, COPY|FINAL],
+            &[FILL | FINAL, FILL | FINAL, FILL | FINAL, FILL | FINAL, FILL | FINAL, FILL | FINAL, FILL | FINAL, FILL | FINAL],
+            &[COPY | FINAL, COPY | FINAL, COPY | FINAL, COPY | FINAL, COPY | FINAL, COPY | FINAL, COPY | FINAL, COPY | FINAL],
             // long inputs
-            &[0xff; 0xffff+2],
-            &[0xff; 0xff10+2],
-            &[0xff; 0xffff*2],
+            &[0xff; 0xffff + 2],
+            &[0xff; 0xff10 + 2],
+            &[0xff; 0xffff * 2],
         ] {
             let mut work = Vec::new();
             compress(&mut work, input);

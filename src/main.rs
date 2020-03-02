@@ -134,7 +134,9 @@ fn write_exe_file<P: AsRef<Path>>(path: P, exe: &exe::Exe) -> Result<u64, Error>
 /// Reads an EXE from `input_path`, compresses it, and writes the compressed EXE
 /// to `output_path`.
 fn compress_mode<P, Q>(input_path: P, output_path: Q) -> Result<(), PathError>
-    where P: AsRef<Path>, Q: AsRef<Path>,
+where
+    P: AsRef<Path>,
+    Q: AsRef<Path>,
 {
     let exe = pack_file(&input_path)
         .map_err(|err| PathError::new(&input_path, err))?;
@@ -146,7 +148,9 @@ fn compress_mode<P, Q>(input_path: P, output_path: Q) -> Result<(), PathError>
 /// Reads an EXE from `input_path`, decompresses it, and writes the decompressed
 /// EXE to `output_path`.
 fn decompress_mode<P, Q>(input_path: P, output_path: Q) -> Result<(), PathError>
-    where P: AsRef<Path>, Q: AsRef<Path>,
+where
+    P: AsRef<Path>,
+    Q: AsRef<Path>,
 {
     let exe = unpack_file(&input_path)
         .map_err(|err| PathError::new(&input_path, err))?;

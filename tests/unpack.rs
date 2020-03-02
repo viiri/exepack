@@ -12,11 +12,11 @@ use exepack_crate::pointer::Pointer;
 mod common;
 
 pub fn store_u16le(buf: &mut [u8], i: usize, v: u16) {
-    buf[i..i+2].clone_from_slice(&u16::to_le_bytes(v));
+    buf[i..i + 2].clone_from_slice(&u16::to_le_bytes(v));
 }
 
 pub fn fetch_u16le(buf: &[u8], i: usize) -> u16 {
-    u16::from_le_bytes(buf[i..i+2].try_into().unwrap())
+    u16::from_le_bytes(buf[i..i + 2].try_into().unwrap())
 }
 
 pub fn unpacked_sample() -> exe::Exe {
