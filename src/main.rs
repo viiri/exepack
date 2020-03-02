@@ -30,11 +30,9 @@ use std::path::{Path, PathBuf};
 use std::process;
 use std::str;
 
-mod exe;
-mod exepack;
-mod pointer;
-#[cfg(test)]
-mod tests;
+extern crate exepack as exepack_crate;
+use exepack_crate::exe;
+use exepack_crate::exepack;
 
 /// An error that may occur while manipulating an EXE file.
 #[derive(Debug)]

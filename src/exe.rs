@@ -351,7 +351,9 @@ mod tests {
     use std::io;
     use std::path;
 
-    use tests;
+    fn store_u16le(buf: &mut [u8], i: usize, v: u16) {
+        buf[i..i+2].clone_from_slice(&u16::to_le_bytes(v));
+    }
 
     #[test]
     fn test_discard() {

@@ -2,10 +2,12 @@ use std::convert::TryFrom;
 use std::fs;
 use std::iter;
 
-use exe;
-use exepack;
-use pointer::Pointer;
-use tests;
+extern crate exepack as exepack_crate;
+use exepack_crate::exe;
+use exepack_crate::exepack;
+use exepack_crate::pointer::Pointer;
+
+mod common;
 
 // generate a body of the given length, with repeating bytes so it is easily
 // compressible.
@@ -61,9 +63,9 @@ fn test_relocs() {
     ] {
         let mut exe = make_compressible_exe(128, 0);
         exe.relocs.push(pointer);
-        tests::maybe_save_exe(format!("tests/reloc_{:04x}:{:04x}.exe", pointer.segment, pointer.offset), &exe).unwrap();
+        common::maybe_save_exe(format!("tests/reloc_{:04x}:{:04x}.exe", pointer.segment, pointer.offset), &exe).unwrap();
         let out = exepack::pack(&exe).unwrap();
-        tests::maybe_save_exe(format!("tests/reloc_{:04x}:{:04x}.packed.exe", pointer.segment, pointer.offset), &out).unwrap();
+        common::maybe_save_exe(format!("tests/reloc_{:04x}:{:04x}.packed.exe", pointer.segment, pointer.offset), &out).unwrap();
     }
 
     // too many relocations within a single segment
@@ -85,7 +87,7 @@ fn test_relocs() {
     ] {
         let mut exe = make_compressible_exe(128, 0);
         exe.relocs.push(pointer);
-        tests::maybe_save_exe(format!("tests/reloc_{:04x}:{:04x}.exe", pointer.segment, pointer.offset), &exe).unwrap();
+        common::maybe_save_exe(format!("tests/reloc_{:04x}:{:04x}.exe", pointer.segment, pointer.offset), &exe).unwrap();
         match exepack::pack(&exe) {
             Err(exepack::FormatError::RelocationTooLarge { .. }) => (),
             x => panic!("{:?} {}", x, pointer),
@@ -126,12 +128,12 @@ fn test_lengths() {
     // the uncompressed output.
     let len = 16 * 0xffff;
     let exe = make_compressible_exe(len, 0);
-    tests::maybe_save_exe("tests/maxlen_compressible.exe", &exe).unwrap();
+    common::maybe_save_exe("tests/maxlen_compressible.exe", &exe).unwrap();
     let out = exepack::pack(&exe).unwrap();
-    tests::maybe_save_exe("tests/maxlen_compressible.packed.exe", &out).unwrap();
+    common::maybe_save_exe("tests/maxlen_compressible.packed.exe", &out).unwrap();
     // 1 byte longer is an error.
     let exe = make_compressible_exe(len + 1, 0);
-    tests::maybe_save_exe("tests/maxlen+1_compressible.exe", &exe).unwrap();
+    common::maybe_save_exe("tests/maxlen+1_compressible.exe", &exe).unwrap();
     want_error!(exepack::pack(&exe));
 
     // Relocations take up space, 2 bytes per; however part of the additional
@@ -148,16 +150,16 @@ fn test_lengths() {
     // the maximum dest_len = 16*0xffff+0xfff0 - (0x10000+16) = 16*0xffff - 32.
     let len = 16 * 0xfffd;
     let exe = make_compressible_exe(len, num_relocs);
-    tests::maybe_save_exe("tests/maxlen_maxrelocs_compressible.exe", &exe).unwrap();
+    common::maybe_save_exe("tests/maxlen_maxrelocs_compressible.exe", &exe).unwrap();
     let out = exepack::pack(&exe).unwrap();
-    tests::maybe_save_exe("tests/maxlen_maxrelocs_compressible.packed.exe", &out).unwrap();
+    common::maybe_save_exe("tests/maxlen_maxrelocs_compressible.packed.exe", &out).unwrap();
     // 1 byte longer is an error.
     let exe = make_compressible_exe(len + 1, num_relocs);
-    tests::maybe_save_exe("tests/maxlen+1_maxrelocs_compressible.exe", &exe).unwrap();
+    common::maybe_save_exe("tests/maxlen+1_maxrelocs_compressible.exe", &exe).unwrap();
     want_error!(exepack::pack(&exe));
     // 1 more relocation is an error.
     let exe = make_compressible_exe(len, num_relocs + 1);
-    tests::maybe_save_exe("tests/maxlen_maxrelocs+1_compressible.exe", &exe).unwrap();
+    common::maybe_save_exe("tests/maxlen_maxrelocs+1_compressible.exe", &exe).unwrap();
     want_error!(exepack::pack(&exe));
 
     // Maximum size incompressible inputs.
@@ -170,12 +172,12 @@ fn test_lengths() {
     // trailing 4 bytes of 0x00 padding.
     let len = 16 * 0xffff - 4;
     let exe = make_incompressible_exe(len, 0);
-    tests::maybe_save_exe("tests/maxlen_incompressible.exe", &exe).unwrap();
+    common::maybe_save_exe("tests/maxlen_incompressible.exe", &exe).unwrap();
     let out = exepack::pack(&exe).unwrap();
-    tests::maybe_save_exe("tests/maxlen_incompressible.packed.exe", &out).unwrap();
+    common::maybe_save_exe("tests/maxlen_incompressible.packed.exe", &out).unwrap();
     // 1 byte longer input is an error.
     let exe = make_incompressible_exe(len + 1, 0);
-    tests::maybe_save_exe("tests/maxlen+1_incompressible.exe", &exe).unwrap();
+    common::maybe_save_exe("tests/maxlen+1_incompressible.exe", &exe).unwrap();
     want_error!(exepack::pack(&exe));
 
     // Relocations take up additional space. The size of the EXEPACK block
@@ -185,16 +187,16 @@ fn test_lengths() {
     let num_relocs = (0xffff - exepack_size) / 2;
     let len = 16 * 0xeffd - 4;
     let exe = make_incompressible_exe(len, num_relocs);
-    tests::maybe_save_exe("tests/maxlen_maxrelocs_incompressible.exe", &exe).unwrap();
+    common::maybe_save_exe("tests/maxlen_maxrelocs_incompressible.exe", &exe).unwrap();
     let out = exepack::pack(&exe).unwrap();
-    tests::maybe_save_exe("tests/maxlen_maxrelocs_incompressible.packed.exe", &out).unwrap();
+    common::maybe_save_exe("tests/maxlen_maxrelocs_incompressible.packed.exe", &out).unwrap();
     // 1 byte longer is an error.
     let exe = make_incompressible_exe(len + 1, num_relocs);
-    tests::maybe_save_exe("tests/maxlen+1_maxrelocs_incompressible.exe", &exe).unwrap();
+    common::maybe_save_exe("tests/maxlen+1_maxrelocs_incompressible.exe", &exe).unwrap();
     want_error!(exepack::pack(&exe));
     // 1 more relocation is an error.
     let exe = make_incompressible_exe(len, num_relocs + 1);
-    tests::maybe_save_exe("tests/maxlen_maxrelocs+1_incompressible.exe", &exe).unwrap();
+    common::maybe_save_exe("tests/maxlen_maxrelocs+1_incompressible.exe", &exe).unwrap();
     want_error!(exepack::pack(&exe));
 }
 
@@ -241,9 +243,9 @@ fn pack_roundtrip_count(count: usize, max: usize, exe: exe::Exe) -> exe::Exe {
         return exe;
     }
     let packed = pack_roundtrip_count(count + 1, max, exepack::pack(&exe).unwrap());
-    tests::maybe_save_exe(format!("tests/hello_roundtrip_{}.packed.exe", count + 1), &packed).unwrap();
+    common::maybe_save_exe(format!("tests/hello_roundtrip_{}.packed.exe", count + 1), &packed).unwrap();
     let unpacked = exepack::unpack(&packed).unwrap();
-    tests::maybe_save_exe(format!("tests/hello_roundtrip_{}.unpacked.exe", count), &unpacked).unwrap();
+    common::maybe_save_exe(format!("tests/hello_roundtrip_{}.unpacked.exe", count), &unpacked).unwrap();
     check_exes_equivalent_count(count, &exe, &unpacked);
     unpacked
 }
