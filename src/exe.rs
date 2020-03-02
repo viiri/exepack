@@ -94,29 +94,6 @@ impl fmt::Display for FormatError {
     }
 }
 
-/// A 16-bit MZ format DOS executable. It omits any data that may have appeared
-/// after the end of the size stated in the EXE header.
-#[derive(Debug)]
-pub struct Exe {
-    // Some fields taken verbatim from the EXE header, the ones that aren't
-    // related to the "container" aspects of EXE. Other fields like e_cblp,
-    // e_cp, and e_cparhdr, which depend on the size of the body and the number
-    // of relocations, are re-computed as needed.
-    pub e_minalloc: u16,
-    pub e_maxalloc: u16,
-    pub e_ss: u16,
-    pub e_sp: u16,
-    pub e_ip: u16,
-    pub e_cs: u16,
-    pub e_ovno: u16,
-
-    /// Relocation addresses.
-    pub relocs: Vec<Pointer>,
-
-    /// The program body that follows the header.
-    pub body: Vec<u8>,
-}
-
 /// Adds a prefix to the message of an `io::Error`.
 fn annotate_io_error(err: io::Error, msg: &str) -> io::Error {
     io::Error::new(err.kind(), format!("{}: {}", msg, err))
@@ -193,6 +170,29 @@ fn write_relocs<W: Write + ?Sized>(w: &mut W, relocs: &[Pointer]) -> io::Result<
         n += write_u16le(w, pointer.segment)?;
     }
     Ok(n)
+}
+
+/// A 16-bit MZ format DOS executable. It omits any data that may have appeared
+/// after the end of the size stated in the EXE header.
+#[derive(Debug)]
+pub struct Exe {
+    // Some fields taken verbatim from the EXE header, the ones that aren't
+    // related to the "container" aspects of EXE. Other fields like e_cblp,
+    // e_cp, and e_cparhdr, which depend on the size of the body and the number
+    // of relocations, are re-computed as needed.
+    pub e_minalloc: u16,
+    pub e_maxalloc: u16,
+    pub e_ss: u16,
+    pub e_sp: u16,
+    pub e_ip: u16,
+    pub e_cs: u16,
+    pub e_ovno: u16,
+
+    /// Relocation addresses.
+    pub relocs: Vec<Pointer>,
+
+    /// The program body that follows the header.
+    pub body: Vec<u8>,
 }
 
 impl Exe {

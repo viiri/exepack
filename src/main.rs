@@ -283,13 +283,13 @@ fn main() {
         compress_mode(&input_path, &output_path)
     } {
         match err.err {
-            Error::Exepack(exepack::FormatError::UnknownStub(ref exepack_header_buffer, ref stub)) => {
+            Error::Exepack(exepack::FormatError::UnknownStub { ref exepack_header, ref stub }) => {
                 // UnknownStub gets special treatment. We search for "Packed
                 // file is corrupt" and display the stub if it is found, or warn
                 // that the input may not be EXEPACK if it is not.
                 eprintln!("{}", err);
                 eprintln!();
-                display_unknown_stub(&mut io::stderr(), &exepack_header_buffer, &stub).unwrap();
+                display_unknown_stub(&mut io::stderr(), &exepack_header, &stub).unwrap();
             }
             _ => eprintln!("{}", err),
         }

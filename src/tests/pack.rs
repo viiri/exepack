@@ -1,3 +1,4 @@
+use std::convert::TryFrom;
 use std::fs;
 use std::iter;
 
@@ -65,6 +66,16 @@ fn test_relocs() {
         tests::maybe_save_exe(format!("tests/reloc_{:04x}:{:04x}.packed.exe", pointer.segment, pointer.offset), &out).unwrap();
     }
 
+    // too many relocations within a single segment
+    {
+        let mut exe = make_compressible_exe(128, 0);
+        exe.relocs = iter::repeat(Pointer { segment: 0x1100, offset: 0xf234 }).take(65536).collect();
+        match exepack::pack(&exe) {
+            Err(exepack::FormatError::TooManyRelocations { segment: 0x2000, num: 65536 }) => (),
+            x => panic!("{:?}", x),
+        }
+    }
+
     // two encodings of a relocation address too large to represent
     // f001:fff0
     // ffff:0010
@@ -76,7 +87,7 @@ fn test_relocs() {
         exe.relocs.push(pointer);
         tests::maybe_save_exe(format!("tests/reloc_{:04x}:{:04x}.exe", pointer.segment, pointer.offset), &exe).unwrap();
         match exepack::pack(&exe) {
-            Err(exepack::FormatError::RelocationAddrTooLarge(_)) => (),
+            Err(exepack::FormatError::RelocationTooLarge { .. }) => (),
             x => panic!("{:?} {}", x, pointer),
         }
     }
@@ -207,18 +218,17 @@ fn check_exes_equivalent_count(count: usize, a: &exe::Exe, b: &exe::Exe) {
     assert_eq!(a.e_cs, b.e_cs, "{}", count);
     assert_eq!(a.e_ovno, b.e_ovno, "{}", count);
 
-    let diff = (b.body.len() as isize).checked_sub(a.body.len() as isize).unwrap();
+    let diff = (isize::try_from(b.body.len()).unwrap())
+        .checked_sub(isize::try_from(a.body.len()).unwrap()).unwrap();
     // should not add more than 15 bytes of padding
     assert!(0 <= diff && diff < 16, "{} {} {}", a.body.len(), b.body.len(), count);
     let (b_body, b_padding) = b.body.split_at(a.body.len());
     // body up to padding must be identical
     assert_eq!(a.body, b_body, "{}", count);
     // padding must be zeroed
-    for c in b_padding {
-        assert_eq!(*c, 0x00, "{:?} {}", b_padding, count);
-    }
+    assert!(b_padding.iter().all(|&c| c == 0x00), "{:?} {}", b_padding, count);
 
-    // relocations must be identical
+    // relocations must be identical up to order
     let mut a_relocs = a.relocs.clone();
     a_relocs.sort();
     let mut b_relocs = a.relocs.clone();
