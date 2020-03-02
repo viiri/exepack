@@ -77,7 +77,7 @@ impl fmt::Display for FormatError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             FormatError::Magic { e_magic } =>
-                write!(f, "Bad EXE magic (e_magic=0x{:04x})", e_magic),
+                write!(f, "Bad EXE magic (e_magic={:#04x})", e_magic),
             FormatError::InvalidSize { e_cp, e_cblp } =>
                 write!(f, "Invalid EXE size encoding (e_cp={}, e_cblp={})", e_cp, e_cblp),
             FormatError::RelocationsOverlapHeader { e_lfarlc } =>

@@ -115,7 +115,7 @@ impl fmt::Display for FormatError {
             FormatError::UnknownHeaderLength { len } =>
                 write!(f, "don't know how to interpret EXEPACK header of {} bytes", len),
             FormatError::Signature { signature } =>
-                write!(f, "Bad EXEPACK header signature (0x{:04x})", signature),
+                write!(f, "Bad EXEPACK header signature {:#04x}", signature),
             FormatError::ExepackTooShort { exepack_size } =>
                 write!(f, "EXEPACK size {} is too short for header, stub, and relocations", exepack_size),
             FormatError::UnknownStub { .. } =>
@@ -129,11 +129,11 @@ impl fmt::Display for FormatError {
             FormatError::CopyOverflow { dst, length, .. } =>
                 write!(f, "write overflow: copy {} bytes at index {}", length, dst),
             FormatError::UnknownCommand { src, command } =>
-                write!(f, "unknown command 0x{:02x} at index {}", command, src),
+                write!(f, "unknown command {:#02x} at index {}", command, src),
             FormatError::Gap { dst, compressed_len } =>
                 write!(f, "decompression left a gap of unwritten bytes between write index {} and original read index {}", dst, compressed_len),
             FormatError::TooManyRelocations { segment, num } =>
-                write!(f, "too many relocations ({}) in segment 0x{:04x}", num, segment),
+                write!(f, "too many relocations ({}) in segment {:#04x}", num, segment),
             FormatError::RelocationTooLarge { pointer } =>
                 write!(f, "relocation address {} is too large to represent", pointer),
             FormatError::ExepackSizeTooLarge { exepack_size } =>
@@ -143,7 +143,7 @@ impl fmt::Display for FormatError {
             FormatError::CompressedSizeTooLarge { compressed_len } =>
                 write!(f, "compressed size {} is too large to represent", compressed_len),
             FormatError::StackPointerTooLarge { stack_pointer } =>
-                write!(f, "stack pointer 0x{:x} is too large to represent", stack_pointer),
+                write!(f, "stack pointer {:#x} is too large to represent", stack_pointer),
         }
     }
 }
