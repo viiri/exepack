@@ -328,7 +328,7 @@ impl Exe {
         n += io::copy(&mut io::repeat(0).take(u64::from(e_cparhdr) * 16 - n), w)
             .map_err(|err| annotate_io_error(err, "writing EXE header padding"))?;
 
-        Ok(n.into())
+        Ok(n)
     }
 
     /// Serializes the `Exe` structure to `w`. Returns the number of bytes
@@ -339,7 +339,7 @@ impl Exe {
         w.write_all(&self.body)
             .map_err(|err| annotate_io_error(err, "writing EXE body"))?;
         n += u64::try_from(self.body.len()).unwrap();
-        Ok(n.into())
+        Ok(n)
     }
 }
 

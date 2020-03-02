@@ -13,7 +13,7 @@ pub struct Pointer {
 impl Pointer {
     /// Get's the pointer's absolute linear address according to the formula
     /// `segment`*16 + `offset`.
-    pub fn abs(&self) -> u32 {
+    pub fn abs(self) -> u32 {
         self.segment as u32 * 16 + self.offset as u32
     }
 }

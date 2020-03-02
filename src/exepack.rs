@@ -291,7 +291,7 @@ fn compress(output: &mut Vec<u8>, input: &[u8]) {
             } else {
                 None
             },
-        ].into_iter().filter_map(|&x| x).min_by_key(|entry| entry.cost).unwrap();
+        ].iter().filter_map(|&x| x).min_by_key(|entry| entry.cost).unwrap();
 
         fill = [
             // We always have the option of starting a new Fill command.
@@ -304,7 +304,7 @@ fn compress(output: &mut Vec<u8>, input: &[u8]) {
             } else {
                 None
             },
-        ].into_iter().filter_map(|&x| x).min_by_key(|entry| entry.cost).unwrap();
+        ].iter().filter_map(|&x| x).min_by_key(|entry| entry.cost).unwrap();
 
         runout_cost = if i < input.len() - 1 {
             i + 1
@@ -317,7 +317,7 @@ fn compress(output: &mut Vec<u8>, input: &[u8]) {
             (runout_cost, Command::Runout),
             (copy.cost, Command::Copy(copy.len)),
             (fill.cost, Command::Fill(fill.len)),
-        ].into_iter().cloned().min_by_key(|&(cost, _)| cost).unwrap();
+        ].iter().cloned().min_by_key(|&(cost, _)| cost).unwrap();
         commands.push(cmd);
     }
 
@@ -669,7 +669,7 @@ pub fn pack(exe: &exe::Exe) -> Result<exe::Exe, FormatError> {
 /// `int 0x21; mov ax, 0x4cff; int 0x21`), followed by a 22-byte error string,
 /// most often `b"Packed file is corrupt"`.
 fn locate_end_of_stub(stub: &[u8]) -> Option<usize> {
-    const SUFFIX: &'static [u8] = b"\xcd\x21\xb8\xff\x4c\xcd\x21";
+    const SUFFIX: &[u8] = b"\xcd\x21\xb8\xff\x4c\xcd\x21";
     for (i, window) in stub.windows(SUFFIX.len()).enumerate() {
         if window == SUFFIX {
             return Some(i + SUFFIX.len() + 22);
@@ -698,10 +698,7 @@ fn parse_relocs(buf: &[u8]) -> Option<(usize, Vec<Pointer>)> {
             }
             let offset = u16::from_le_bytes(buf[i..i + 2].try_into().unwrap());
             i += 2;
-            relocs.push(Pointer {
-                segment: segment * 0x1000,
-                offset: offset,
-            });
+            relocs.push(Pointer { segment: segment * 0x1000, offset });
         }
     }
     Some((i, relocs))
