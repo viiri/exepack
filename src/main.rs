@@ -21,8 +21,6 @@
 //! Exit status is 0 if there was no error, or 1 if there was any kind of error
 //! (e.g., I/O, EXE parsing, EXEPACK decompression).
 
-extern crate getopts;
-
 use std::env;
 use std::fmt;
 use std::fs::File;
