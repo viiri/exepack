@@ -5,6 +5,7 @@
 //! * [EXE Format](http://www.delorie.com/djgpp/doc/exe/)
 //! * [Notes on the format of DOS .EXE files](http://www.tavi.co.uk/phobos/exeformat.html)
 
+use std::convert::TryFrom;
 use std::convert::TryInto;
 use std::fmt;
 use std::io::{self, prelude::*};
@@ -16,7 +17,7 @@ const MAGIC: u16 = 0x5a4d; // "MZ"
 
 /// The length of an EXE header, excluding relocations and variable-sized
 /// padding.
-const HEADER_LEN: u64 = 28;
+const HEADER_LEN: u16 = 28;
 
 /// The error type for `Exe::read` and `Exe::write` operations.
 #[derive(Debug)]
@@ -116,6 +117,11 @@ pub struct Exe {
     pub body: Vec<u8>,
 }
 
+/// Adds a prefix to the message of an `io::Error`.
+fn annotate_io_error(err: io::Error, msg: &str) -> io::Error {
+    io::Error::new(err.kind(), format!("{}: {}", msg, err))
+}
+
 /// Reads a little-endian `u16` from `r`.
 fn read_u16le<R: Read + ?Sized>(r: &mut R) -> io::Result<u16> {
     let mut buf = [0; 2];
@@ -123,9 +129,70 @@ fn read_u16le<R: Read + ?Sized>(r: &mut R) -> io::Result<u16> {
     Ok(u16::from_le_bytes(buf))
 }
 
-/// Adds a prefix to the message of an `io::Error`.
-fn annotate_io_error(err: io::Error, msg: &str) -> io::Error {
-    io::Error::new(err.kind(), format!("{}: {}", msg, err))
+/// Writes a little-endian `u16` to `w`. Returns the number of bytes written,
+/// always 2.
+fn write_u16le<W: Write + ?Sized>(w: &mut W, v: u16) -> io::Result<u64> {
+    let buf = &u16::to_le_bytes(v);
+    w.write_all(&u16::to_le_bytes(v)).and(Ok(buf.len().try_into().unwrap()))
+}
+
+/// Reads and discards `n` bytes from `r`. Returns an error of the kind
+/// `io::ErrorKind::UnexpectedEof` if EOF occurs before `n` bytes can be read.
+fn discard<R: Read + ?Sized>(r: &mut R, n: u64) -> io::Result<u64> {
+    io::copy(&mut r.take(n), &mut io::sink()).and_then(|count|
+        if count == n {
+            Ok(count)
+        } else {
+            Err(io::Error::new(io::ErrorKind::UnexpectedEof, format!("{}", count)))
+        }
+    )
+}
+
+/// Converts a `(e_cblp, e_cp)` tuple into a single length value. Returns `None`
+/// if the inputs are an invalid encoding (encode a negative length, or have
+/// `e_cblp` > 511).
+fn decode_exe_len(e_cblp: u16, e_cp: u16) -> Option<u64> {
+    let e_cblp = u64::try_from(e_cblp).unwrap();
+    let e_cp = u64::try_from(e_cp).unwrap();
+    match (e_cblp, e_cp) {
+        (0, _) => Some(e_cp * 512),
+        (_, 0) => None, // Encodes a negative length.
+        (1..=511, _) => Some((e_cp - 1) * 512 + e_cblp),
+        _ => None, // e_cblp > 511.
+    }
+}
+
+/// Returns a tuple `(e_cblp, e_cp)` that encodes `len` for the so-named EXE
+/// header fields. Returns `None` if the `len` is too large to be represented
+/// (> 0x1fffe00).
+fn encode_exe_len(len: usize) -> Option<(u16, u16)> {
+    // Number of 512-byte blocks needed to store len, rounded up.
+    let e_cp: u16 = ((len + 511) / 512).try_into().ok()?;
+    // Number of bytes remaining after all the full blocks.
+    let e_cblp: u16 = (len % 512).try_into().ok()?;
+    Some((e_cblp, e_cp))
+}
+
+/// Reads a relocation table from `r`.
+fn read_relocs<R: Read + ?Sized>(r: &mut R, num_relocs: usize) -> io::Result<Vec<Pointer>> {
+    let mut relocs = Vec::with_capacity(num_relocs);
+    for _ in 0..num_relocs {
+        relocs.push(Pointer {
+            offset: read_u16le(r)?,
+            segment: read_u16le(r)?,
+        });
+    }
+    Ok(relocs)
+}
+
+/// Writes a relocation table to `w`. Returns the number of bytes written.
+fn write_relocs<W: Write + ?Sized>(w: &mut W, relocs: &[Pointer]) -> io::Result<u64> {
+    let mut n = 0;
+    for pointer in relocs {
+        n += write_u16le(w, pointer.offset)?;
+        n += write_u16le(w, pointer.segment)?;
+    }
+    Ok(n)
 }
 
 impl Exe {
@@ -148,10 +215,10 @@ impl Exe {
                 .ok_or(FormatError::InvalidSize { e_cp, e_cblp })?;
         let num_relocs = {
             let e_crlc = read_u16le(input)?;
-            e_crlc as usize
+            usize::from(e_crlc)
         };
         let e_cparhdr = read_u16le(input)?;
-        let header_len = e_cparhdr as u64 * 16;
+        let header_len = u64::from(e_cparhdr) * 16;
         let e_minalloc = read_u16le(input)?;
         let e_maxalloc = read_u16le(input)?;
         let e_ss = read_u16le(input)?;
@@ -166,14 +233,16 @@ impl Exe {
         let e_ip = read_u16le(input)?;
         let e_cs = read_u16le(input)?;
         let e_lfarlc = read_u16le(input)?;
-        let relocs_offset = e_lfarlc as u64;
+        let relocs_offset = u64::from(e_lfarlc);
         let e_ovno = read_u16le(input)?;
 
         // We have now read HEADER_LEN bytes.
-        let mut pos: u64 = HEADER_LEN;
+        let mut pos = u64::from(HEADER_LEN);
 
         // Read the relocation table.
-        let relocs = if num_relocs > 0 {
+        let relocs = if num_relocs == 0 {
+            Vec::new()
+        } else {
             // Discard bytes up to the beginning of the relocation table.
             pos += discard(input, relocs_offset.checked_sub(pos)
                 .ok_or(FormatError::RelocationsOverlapHeader { e_lfarlc })?
@@ -182,10 +251,8 @@ impl Exe {
             // Read the relocation table itself.
             read_relocs(input, num_relocs)
                 .map_err(|err| annotate_io_error(err, "reading EXE relocation table"))?
-        } else {
-            Vec::new()
         };
-        pos += relocs.len() as u64 * 4;
+        pos += u64::try_from(relocs.len()).unwrap() * 4;
 
         // Discard bytes up to the end of the header.
         pos += discard(input, header_len.checked_sub(pos)
@@ -213,22 +280,22 @@ impl Exe {
         }
 
         Ok(Self {
-            e_minalloc: e_minalloc,
-            e_maxalloc: e_maxalloc,
-            e_ss: e_ss,
-            e_sp: e_sp,
-            e_ip: e_ip,
-            e_cs: e_cs,
-            e_ovno: e_ovno,
+            e_minalloc,
+            e_maxalloc,
+            e_ss, e_sp,
+            e_ip, e_cs,
+            e_ovno,
             relocs,
             body,
         })
     }
 
+    /// Serializes the `Exe` header to `w`, including padding to a multiple of
+    /// 512 bytes.
     fn write_header<W: Write + ?Sized>(&self, w: &mut W) -> Result<u64, Error> {
         // http://www.delorie.com/djgpp/doc/exe/: "Note that some OSs and/or
         // programs may fail if the header is not a multiple of 512 bytes."
-        let num_header_pages = ((HEADER_LEN as usize + 4 * self.relocs.len()) + 511) / 512;
+        let num_header_pages = ((usize::from(HEADER_LEN) + 4 * self.relocs.len()) + 511) / 512;
         let exe_len = num_header_pages * 512 + self.body.len();
         let (e_cblp, e_cp) = encode_exe_len(exe_len)
             .ok_or(FormatError::TooLong { len: exe_len })?;
@@ -250,89 +317,29 @@ impl Exe {
         n += write_u16le(w, 0)?; // e_csum
         n += write_u16le(w, self.e_ip)?;
         n += write_u16le(w, self.e_cs)?;
-        n += write_u16le(w, HEADER_LEN as u16)?;
+        n += write_u16le(w, HEADER_LEN)?;
         n += write_u16le(w, self.e_ovno)?;
-        assert_eq!(n as u64, HEADER_LEN);
+        assert_eq!(n, u64::from(HEADER_LEN));
 
         n += write_relocs(w, &self.relocs)
-            .map_err(|err| annotate_io_error(err, "writing EXE relocations"))? as u64;
+            .map_err(|err| annotate_io_error(err, "writing EXE relocations"))?;
 
-        assert!(n <= e_cparhdr as u64 * 16);
-        n += io::copy(&mut io::repeat(0).take(e_cparhdr as u64 * 16 - n), w)
-            .map_err(|err| annotate_io_error(err, "writing EXE header padding"))? as u64;
+        assert!(n <= u64::from(e_cparhdr) * 16);
+        n += io::copy(&mut io::repeat(0).take(u64::from(e_cparhdr) * 16 - n), w)
+            .map_err(|err| annotate_io_error(err, "writing EXE header padding"))?;
 
-        Ok(n as u64)
+        Ok(n.into())
     }
 
     /// Serializes the `Exe` structure to `w`. Returns the number of bytes
     /// written.
     pub fn write<W: Write + ?Sized>(&self, w: &mut W) -> Result<u64, Error> {
         let mut n: u64 = 0;
-        n += self.write_header(w)? as u64;
+        n += self.write_header(w)?;
         w.write_all(&self.body)
             .map_err(|err| annotate_io_error(err, "writing EXE body"))?;
-        n += self.body.len() as u64;
-        Ok(n)
-    }
-}
-
-fn write_u16le<W: Write + ?Sized>(w: &mut W, v: u16) -> io::Result<u64> {
-    let buf = &u16::to_le_bytes(v);
-    w.write_all(&u16::to_le_bytes(v)).and(Ok(buf.len() as u64))
-}
-
-fn write_relocs<W: Write + ?Sized>(w: &mut W, relocs: &[Pointer]) -> io::Result<u64> {
-    let mut n = 0;
-    for pointer in relocs {
-        n += write_u16le(w, pointer.offset)?;
-        n += write_u16le(w, pointer.segment)?;
-    }
-    Ok(n)
-}
-
-/// Reads and discards `n` bytes from `r`. Returns an error of the kind
-/// `io::ErrorKind::UnexpectedEof` if EOF occurs before `n` bytes can be read.
-fn discard<R: Read + ?Sized>(r: &mut R, n: u64) -> io::Result<u64> {
-    io::copy(&mut r.take(n), &mut io::sink()).and_then(|count|
-        if count == n {
-            Ok(count)
-        } else {
-            Err(io::Error::new(io::ErrorKind::UnexpectedEof, format!("{}", count)))
-        }
-    )
-}
-
-fn read_relocs<R: Read + ?Sized>(r: &mut R, num_relocs: usize) -> io::Result<Vec<Pointer>> {
-    let mut relocs = Vec::with_capacity(num_relocs);
-    for _ in 0..num_relocs {
-        relocs.push(Pointer {
-            offset: read_u16le(r)?,
-            segment: read_u16le(r)?,
-        });
-    }
-    Ok(relocs)
-}
-
-/// Returns a tuple `(e_cblp, e_cp)` that encodes `len` as appropriate for the
-/// so-named EXE header fields. Returns `None` if the `len` is too large to be
-/// represented (> 0x1fffe00).
-fn encode_exe_len(len: usize) -> Option<(u16, u16)> {
-    // Number of 512-byte blocks needed to store len, rounded up.
-    let e_cp: u16 = ((len + 511) / 512).try_into().ok()?;
-    // Number of bytes remaining after all the full blocks.
-    let e_cblp: u16 = (len % 512).try_into().ok()?;
-    Some((e_cblp, e_cp))
-}
-
-/// Converts a `(e_cblp, e_cp)` tuple into a single length value. Returns `None`
-/// if the inputs are an invalid encoding (encode a negative length, or have
-/// `e_cblp` > 511).
-fn decode_exe_len(e_cblp: u16, e_cp: u16) -> Option<u64> {
-    match (e_cblp, e_cp) {
-        (0, _) => Some(e_cp as u64 * 512),
-        (_, 0) => None, // Encodes a negative length.
-        (1..=511, _) => Some((e_cp - 1) as u64 * 512 + e_cblp as u64),
-        _ => None, // e_cblp > 511.
+        n += u64::try_from(self.body.len()).unwrap();
+        Ok(n.into())
     }
 }
 
@@ -444,8 +451,8 @@ mod tests {
             96, // EOF during body
         ] {
             for &file_len_hint in &[ // file_len_hint shouldn't matter
-                Some(sample.len() as u64),
-                Some(len as u64),
+                Some(u64::try_from(sample.len()).unwrap()),
+                Some(u64::try_from(len).unwrap()),
                 None,
             ] {
                 read_exe_with_hint(&sample, file_len_hint).unwrap(); // no truncation ⇒ ok
@@ -467,13 +474,13 @@ mod tests {
 
         // bogus encodings
         for &(e_cblp, e_cp) in &[
-            (512, 1),
-            (0xffff, 1),
-            (sample.len(), 0),
+            (512u16, 1u16),
+            (0xffffu16, 1u16),
+            (sample.len().try_into().unwrap(), 0u16),
         ] {
             let mut sample = sample.clone();
-            tests::store_u16le(&mut sample, 2, e_cblp as u16);
-            tests::store_u16le(&mut sample, 4, e_cp as u16);
+            tests::store_u16le(&mut sample, 2, e_cblp);
+            tests::store_u16le(&mut sample, 4, e_cp);
             maybe_save_exe(format!("tests/e_cblp={}_e_cp={}.exe", e_cblp, e_cp), &sample).unwrap();
             match read_exe(&sample) {
                 Err(Error::Format(FormatError::InvalidSize { .. })) => (),
@@ -490,8 +497,8 @@ mod tests {
         ] {
             let mut sample = sample.clone();
             let (e_cblp, e_cp) = encode_exe_len(len).unwrap();
-            tests::store_u16le(&mut sample, 2, e_cblp as u16);
-            tests::store_u16le(&mut sample, 4, e_cp as u16);
+            tests::store_u16le(&mut sample, 2, e_cblp);
+            tests::store_u16le(&mut sample, 4, e_cp);
             maybe_save_exe(format!("tests/exe_len_{}.exe", len), &sample).unwrap();
             match read_exe(&sample) {
                 Err(Error::Format(FormatError::TooShort { .. })) => (),
@@ -505,8 +512,8 @@ mod tests {
             let mut sample = sample.clone();
             let len = 96;
             let (e_cblp, e_cp) = encode_exe_len(len).unwrap();
-            tests::store_u16le(&mut sample, 2, e_cblp as u16);
-            tests::store_u16le(&mut sample, 4, e_cp as u16);
+            tests::store_u16le(&mut sample, 2, e_cblp);
+            tests::store_u16le(&mut sample, 4, e_cp);
             maybe_save_exe(format!("tests/exe_len_{}.exe", len), &sample).unwrap();
             let exe = read_exe(&sample).unwrap();
             assert_eq!(exe.body.len(), len - 64);
