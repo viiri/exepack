@@ -521,14 +521,12 @@ fn decompress(buf: &mut [u8], mut dst: usize, mut src: usize) -> Result<(), Form
             0xb0 => {
                 src = src.checked_sub(1).ok_or(FormatError::SrcOverflow())?;
                 let fill = buf[src];
-                // debug!("0x{:02x} fill {} 0x{:02x}", command, length, fill);
                 dst = dst.checked_sub(length).ok_or(FormatError::FillOverflow(dst, src, command, length, fill))?;
                 for i in 0..length {
                     buf[dst + i] = fill;
                 }
             }
             0xb2 => {
-                // debug!("0x{:02x} copy {}", command, length);
                 src = src.checked_sub(length).ok_or(FormatError::SrcOverflow())?;
                 dst = dst.checked_sub(length).ok_or(FormatError::CopyOverflow(dst, src, command, length))?;
                 for i in 0..length {
@@ -683,7 +681,6 @@ pub fn unpack(exe: &exe::Exe) -> Result<exe::Exe, FormatError> {
     let mut stub = exepack_header_buf.split_off(exepack_header_len);
 
     let exepack_header = parse_exepack_header(&exepack_header_buf)?;
-    debug!("{:?}", exepack_header);
 
     // The EXEPACK header's exepack_size field contains the length of the
     // EXEPACK header, the decompression stub, and the relocation table all
@@ -699,14 +696,12 @@ pub fn unpack(exe: &exe::Exe) -> Result<exe::Exe, FormatError> {
     // The packed relocation table follows immediately after.
     let stub_len = locate_end_of_stub(&stub)
         .ok_or(FormatError::UnknownStub(exepack_header_buf.clone(), stub.clone()))?;
-    debug!("found stub of length {}", stub_len);
     let relocs_buf = stub.split_off(stub_len);
 
     // Parse the packed relocation table.
     let relocs = {
         let (i, relocs) = parse_exepack_relocs(&relocs_buf)
             .ok_or(FormatError::ExepackTooShort(exepack_header.exepack_size))?;
-        debug!("{:?}", relocs);
         // If there is any trailing data here, it means that exepack_size was
         // too big compared to our reckoning of where the packed relocation
         // table started; in other words it's possible that read_stub didn't

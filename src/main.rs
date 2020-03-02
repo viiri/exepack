@@ -30,10 +30,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process;
 use std::str;
-use std::sync::atomic;
 
-#[macro_use]
-mod debug;
 mod exe;
 mod exepack;
 mod pointer;
@@ -249,7 +246,7 @@ Compress or decompress a DOS EXE executable with EXEPACK.",
 
 fn main() {
     let mut opts = getopts::Options::new();
-    opts.optflag("", "debug", "show debugging output on stderr");
+    opts.optflag("", "debug", "does nothing (formerly showed debugging output)");
     opts.optflag("d", "decompress", "decompress");
     opts.optflag("h", "help", "show this help");
     let matches = match opts.parse(env::args().skip(1)) {
@@ -266,7 +263,7 @@ fn main() {
     }
 
     if matches.opt_present("debug") {
-        debug::DEBUG.store(true, atomic::Ordering::Relaxed);
+        // Does nothing; removed --debug functionality after version 0.6.0.
     }
 
     if matches.free.len() != 2 {
