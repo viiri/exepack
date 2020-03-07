@@ -1,6 +1,6 @@
 [package]
 name = "exepack"
-version = "0.7.0"
+version = "1.0.0"
 authors = ["David Fifield <david@bamsoftware.com>"]
 
 [dependencies]
