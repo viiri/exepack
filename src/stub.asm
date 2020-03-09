@@ -213,7 +213,7 @@ TIMES	283-(relocation_entries-error)-($-$$)	nop
 error:
 	mov ah, 0x40		; ah=0x40 => write to file handle
 	mov bx, 2		; file handle 2 (stderr)
-	mov cx, 0x16		; 22 bytes of data (strlen("Packed file is corrupt"))
+	mov cx, .errmsg_len	; length of string to write
 	mov dx, cs
 	mov ds, dx		; ds = cs
 	mov dx, .errmsg		; ds:dx is address of string to write
@@ -221,5 +221,6 @@ error:
 	mov ax, 0x4cff		; ah=0x4c => exit program; al=0xff => exit code -1
 	int 0x21		; syscall
 .errmsg:	db	'Packed file is corrupt'
+.errmsg_len	equ	$-.errmsg
 
 relocation_entries:
