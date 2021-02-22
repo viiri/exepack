@@ -1,8 +1,7 @@
 ; EXEPACK decompression blob.
 ; This one aims to be compatible with Microsoft EXEPACK, while fixing
 ; the segment underflow (A20 gate) and relocation-at-offset-0xffff bugs,
-; while fitting into what appears to be the most common size of 283
-; bytes.
+; and fitting into what appears to be the most common size of 283 bytes.
 ;
 ; Constraints:
 ; * EXEPACK header is 18 bytes (i.e., includes a skip_len field).
