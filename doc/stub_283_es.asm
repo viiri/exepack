@@ -23,6 +23,9 @@
 ; (add [es:di],bx) at offset 0xbd; and 2eff2f (jmp far [cs:bx]) at
 ; offset 0xfe. From exe/eexpk.asm in http://unp.bencastricum.nl/unp4-src.zip:
 ; dw 0058h, 00BDh, 00FEh, EXEPACK, _V4_05, _or, _V4_06             , 0
+;
+; Sample:
+; https://archive.org/download/Total_DOS_Collection_Release_14/TDC_Release_14.zip/TDC%20release%2014%2F1992%2FBatman%20Returns%20%28Es%29%20%281992%29%28Konami%2C%20Inc.%29%20%5BAdventure%5D.zip BATMAN.EXE
 
 BITS 16
 ORG 18	; EXEPACK header is 18 bytes.
