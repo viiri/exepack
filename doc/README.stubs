@@ -39,7 +39,7 @@ problems with all the existing stubs, while fitting into 283 bytes and
 using an explicit skip_len, which seems to be the most common format in
 the wild.
 
-			explicit					relocate	allows		error				UNP
-		length	skip_len	saves ax	A20 bug		0xffff bug	expansion	string				identification
+			explicit	restores			relocate	allows		error				UNP
+		length	skip_len	ax		A20 bug		0xffff bug	expansion	string				identification
 ------------------------------------------------------------------------------------------------------------------------------------------------------
 src/stub.asm	283	yes		yes		no		no		yes		"Packed file is corrupt"	<none>
