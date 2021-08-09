@@ -180,6 +180,23 @@ pub struct Exe {
     // related to the "container" aspects of EXE. Other fields like e_cblp,
     // e_cp, and e_cparhdr, which depend on the size of the body and the number
     // of relocations, are re-computed as needed.
+    //
+    // We copy the e_minalloc and e_maxalloc fields from input to output. UNP
+    // similarly copies e_maxalloc from input to output, but for e_minalloc
+    // (which it calls MinParMem), it computes a new value as follows:
+    //  out_MinParMem = in_MinParMem - (out_ExeImageSz/16 - in_ExeImageSz/16)
+    // where in_ExeImageSz and out_ExeImageSz are the size in bytes of the
+    // compressed and decompressed programs, excluding the EXE header. See the
+    // MoreStrucInfo label in u4.asm (https://bencastricum.nl/unp/unp4-src.zip),
+    // which does
+    //  TotalMem = in_ExeImageSz/16 + EXTRAMEM + in_MinParMem
+    // and the CalcSize label, which does
+    //  out_MinParMem = TotalMem - EXTRAMEM - out_ExeImageSz/16
+    // I suppose the logic here is that the EXEPACK compressor would have taken
+    // the e_minalloc of the uncompressed original file, and increased it by the
+    // number of paragraphs by which the size of the uncompressed file exceeds
+    // the size of the compressed file. Once decompressed, that additional
+    // amount of memory is no longer required.
     pub e_minalloc: u16,
     pub e_maxalloc: u16,
     pub e_ss: u16,
@@ -225,7 +242,7 @@ impl Exe {
         let e_sp = read_u16le(input)?;
         // Ignore the checksum. I cannot find a clear specification of how it
         // could be computed, and I have found no implementation of DOS that
-        // checks it.
+        // checks it. UNP hardcodes the output checksum to 0.
         // https://github.com/microsoft/MS-DOS/blob/80ab2fddfdf30f09f0a0a637654cbb3cd5c7baa6/v2.0/source/EXE2BIN.ASM#L79
         // https://sourceforge.net/p/dosbox/code-0/HEAD/tree/dosbox/tags/RELEASE_0_74_3/src/dos/dos_execute.cpp#l46
         // https://sourceforge.net/p/freedos/svn/HEAD/tree/kernel/tags/ke2042/kernel/task.c#l555
