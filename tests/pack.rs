@@ -19,7 +19,7 @@ fn compressible_body(len: usize) -> Vec<u8> {
 // cannot be smaller after compression
 fn incompressible_body(len: usize) -> Vec<u8> {
     // 66 90 is a 2-byte NOP.
-    [0x66, 0x90].into_iter().cloned().cycle().take(len).collect()
+    [0x66, 0x90].iter().cloned().cycle().take(len).collect()
 }
 
 fn make_exe(body: Vec<u8>, relocs: Vec<Pointer>) -> exe::Exe {
