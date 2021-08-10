@@ -129,8 +129,8 @@ fn discard<R: Read + ?Sized>(r: &mut R, n: u64) -> io::Result<u64> {
 /// if the inputs are an invalid encoding (encode a negative length, or have
 /// `e_cblp` > 511).
 fn decode_exe_len(e_cblp: u16, e_cp: u16) -> Option<u64> {
-    let e_cblp = u64::try_from(e_cblp).unwrap();
-    let e_cp = u64::try_from(e_cp).unwrap();
+    let e_cblp = u64::from(e_cblp);
+    let e_cp = u64::from(e_cp);
     match (e_cblp, e_cp) {
         (0, _) => Some(e_cp * 512),
         (_, 0) => None, // Encodes a negative length.
