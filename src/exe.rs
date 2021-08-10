@@ -146,7 +146,7 @@ fn encode_exe_len(len: usize) -> Option<(u16, u16)> {
     // Number of 512-byte blocks needed to store len, rounded up.
     let e_cp: u16 = ((len + 511) / 512).try_into().ok()?;
     // Number of bytes remaining after all the full blocks.
-    let e_cblp: u16 = (len % 512).try_into().ok()?;
+    let e_cblp: u16 = (len % 512).unwrap();
     Some((e_cblp, e_cp))
 }
 
