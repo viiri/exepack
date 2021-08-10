@@ -144,9 +144,9 @@ fn decode_exe_len(e_cblp: u16, e_cp: u16) -> Option<u64> {
 /// (> 0x1fffe00).
 fn encode_exe_len(len: usize) -> Option<(u16, u16)> {
     // Number of 512-byte blocks needed to store len, rounded up.
-    let e_cp: u16 = ((len + 511) / 512).try_into().ok()?;
+    let e_cp = u16::try_from((len + 511) / 512).ok()?;
     // Number of bytes remaining after all the full blocks.
-    let e_cblp: u16 = (len % 512).unwrap();
+    let e_cblp = u16::try_from(len % 512).unwrap();
     Some((e_cblp, e_cp))
 }
 
@@ -320,7 +320,7 @@ impl Exe {
             .or(Err(FormatError::TooManyRelocations { num: self.relocs.len() }))?;
         // This next calculation always fits into a u16, so panic rather than
         // return an error.
-        let e_cparhdr: u16 = (num_header_pages * 512 / 16).try_into().unwrap();
+        let e_cparhdr = u16::try_from(num_header_pages * 512 / 16).unwrap();
         let mut n = 0;
         n += write_u16le(w, MAGIC)?;
         n += write_u16le(w, e_cblp)?;
