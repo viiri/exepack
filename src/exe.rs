@@ -240,13 +240,23 @@ impl Exe {
         let e_maxalloc = read_u16le(input)?;
         let e_ss = read_u16le(input)?;
         let e_sp = read_u16le(input)?;
-        // Ignore the checksum. I cannot find a clear specification of how it
-        // could be computed, and I have found no implementation of DOS that
-        // checks it. UNP hardcodes the output checksum to 0.
+        // Ignore the checksum. In practice, nothing verifies EXE checksums (not
+        // even MS-DOS), hence many checksums are incorrect.
+        //
+        // https://jeffpar.github.io/kbarchive/kb/071/Q71971/
+        // "Note that Microsoft LINK does not correctly calculate the checksum
+        // if the linker command line includes the /CODEVIEW or /EXEPACK option
+        // switches. However, because the MS-DOS, Microsoft Windows, and OS/2
+        // versions 1.x do not verify the checksum, this behavior does not
+        // present a problem under normal circumstances. Microsoft LINK version
+        // 5.3 and later do not compute a 16-bit or 32-bit checksum. The
+        // reserved bytes in the .EXE header are set to zero."
+        //
+        // Here are examples of DOS implementations ignoring the checksum:
         // https://github.com/microsoft/MS-DOS/blob/80ab2fddfdf30f09f0a0a637654cbb3cd5c7baa6/v2.0/source/EXE2BIN.ASM#L79
         // https://sourceforge.net/p/dosbox/code-0/HEAD/tree/dosbox/tags/RELEASE_0_74_3/src/dos/dos_execute.cpp#l46
         // https://sourceforge.net/p/freedos/svn/HEAD/tree/kernel/tags/ke2042/kernel/task.c#l555
-        read_u16le(input)?;
+        read_u16le(input)?; // e_csum
         let e_ip = read_u16le(input)?;
         let e_cs = read_u16le(input)?;
         let e_lfarlc = read_u16le(input)?;
@@ -331,6 +341,22 @@ impl Exe {
         n += write_u16le(w, self.e_maxalloc)?;
         n += write_u16le(w, self.e_ss)?;
         n += write_u16le(w, self.e_sp)?;
+        // Hardcode the checksum to 0. Computing the checksum would prevent
+        // one-pass encoding of the EXE file (i.e., we would need to seek as
+        // well as write); and in practice EXE checksums are ignored. UNP
+        // similarly hardcodes the output checksum to 0, as does LINK.EXE 5.3 or
+        // later.
+        //
+        // https://jeffpar.github.io/kbarchive/kb/071/Q71971/ has the clearest
+        // description of how to compute the checksum I know of: "the one's
+        // complement of the summation of all words in the .EXE file. ... During
+        // this addition, LINK gives the Complemented Checksum word (12-13H) a
+        // temporary value of 0000H. If the file consists of an odd number of
+        // bytes, then the final byte is treated as a word with a high byte of
+        // 00H." But even this description is ambiguous as to whether "all words
+        // in the .EXE file" uses the size of the file in the filesystem, or the
+        // potentially smaller size specified in the e_cblp and e_cp fields of
+        // the EXE header.
         n += write_u16le(w, 0)?; // e_csum
         n += write_u16le(w, self.e_ip)?;
         n += write_u16le(w, self.e_cs)?;
