@@ -1,0 +1,11 @@
+## v1.1.0
+
+Compress mode now works. Before this release, because of a bug, compress
+mode had only returned the input executable essentially unchanged (after
+normalizing the EXE header and possibly truncating the file to the size
+specified there).
+
+
+## v1.0.0 2020-03-07
+
+Initial release.
