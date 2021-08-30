@@ -23,7 +23,7 @@
 ; UNP calls this version "EXEPACK V4.03", because it has 8ec0bf0f00
 ; (mov es,ax; mov di,15) ending at offset 0x50; 26011d (add [es:di],bx)
 ; at offset 0xb7; and 2eff2f (jmp far [cs:bx]) at offset 0xf8. From
-; exe/eexpk.asm in http://unp.bencastricum.nl/unp4-src.zip:
+; exe/eexpk.asm in https://bencastricum.nl/unp/unp4-src.zip:
 ; dw 0050h, 00B7h, 00F8h, EXEPACK, _V4_03                          , 0
 ;
 ; Sample:

@@ -19,7 +19,7 @@ allows expansion: can it handle the case where len(compressed) >
 error string: the human-readable error message printed out when there is
 	a decompression failure.
 UNP identification:
-	how the file is identified by UNP (http://unp.bencastricum.nl/), an
+	how the file is identified by UNP (https://bencastricum.nl/unp/), an
 	executable unpacker. UNP identifies by matching the offsets to certain
 	byte patterns in a table. See label EPIDData in the file
 	exe/eexpk.asm in the UNP source code.

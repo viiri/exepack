@@ -23,7 +23,7 @@
 ; because it has 8ec0bf0f00 (mov es,ax; mov di,15) ending at offset
 ; 0x50; 26011d (add [es:di],bx) at offset 0xb5; and 2eff2f
 ; (jmp far [cs:bx]) at offset 0xf6. From exe/eexpk.asm in
-; http://unp.bencastricum.nl/unp4-src.zip:
+; https://bencastricum.nl/unp/unp4-src.zip:
 ; dw 0050h, 00B5h, 00F6h, LINK, _V3_60, C, _V3_64, C, _V3_65
 ; dw                      _or, _V5_01_21, _, FwdS, EXEPACK         , 0
 ;
