@@ -35,7 +35,14 @@ pub fn assert_exes_equivalent(a: &exe::Exe, b: &exe::Exe) {
         (b, a)
     };
 
-    assert_eq!(a.e_minalloc, b.e_minalloc);
+    // The second e_minalloc must be at least as large as the first, but may be
+    // larger.
+    assert!(
+        a.body.len() + usize::from(a.e_minalloc)*16 <= b.body.len() + usize::from(b.e_minalloc)*16,
+        "{}+{}*16={} {}+{}*16={}",
+        a.body.len(), a.e_minalloc, a.body.len() + usize::from(a.e_minalloc)*16,
+        b.body.len(), b.e_minalloc, b.body.len() + usize::from(b.e_minalloc)*16,
+    );
     assert_eq!(a.e_maxalloc, b.e_maxalloc);
     assert_eq!(a.e_ss, b.e_ss);
     assert_eq!(a.e_sp, b.e_sp);

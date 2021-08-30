@@ -31,6 +31,49 @@ pub fn packed_sample() -> exe::Exe {
 }
 
 #[test]
+fn test_minalloc() {
+    let round_up = |x: usize| x.checked_add((16 - x % 16) % 16).unwrap();
+
+    let packed = exe::Exe {
+        e_minalloc: 0x4000,
+        ..packed_sample()
+    };
+    common::maybe_save_exe(format!("tests/minalloc_{}.packed.exe", packed.e_minalloc), &packed).unwrap();
+    let unpacked = exepack::unpack(&packed).unwrap();
+    common::maybe_save_exe(format!("tests/minalloc_{}.unpacked.exe", packed.e_minalloc), &unpacked).unwrap();
+    assert_eq!(
+        round_up(packed.body.len()) + usize::from(packed.e_minalloc)*16,
+        round_up(unpacked.body.len()) + usize::from(unpacked.e_minalloc)*16,
+    );
+
+    // No headroom in e_minalloc should cause an overflow error.
+    let packed = exe::Exe {
+        e_minalloc: 0xffff,
+        ..packed_sample()
+    };
+    common::maybe_save_exe(format!("tests/minalloc_{}.packed.exe", packed.e_minalloc), &packed).unwrap();
+    match exepack::unpack(&packed) {
+        Err(exepack::FormatError::MinAllocTooLarge { minalloc: 65557 }) => (),
+        x => panic!("{:?}", x),
+    }
+
+    // A too-low input e_minalloc should saturate to 0. We need a compressible
+    // body in order for the decompression not to result in an overall
+    // expansion, which would have the effect of increasing e_minalloc.
+    let packed = exe::Exe {
+        e_minalloc: 0,
+        ..exepack::pack(&exe::Exe {
+            body: vec![0; 1000],
+            ..unpacked_sample()
+        }).unwrap()
+    };
+    common::maybe_save_exe(format!("tests/minalloc_{}.packed.exe", packed.e_minalloc), &packed).unwrap();
+    let unpacked = exepack::unpack(&packed).unwrap();
+    common::maybe_save_exe(format!("tests/minalloc_{}.unpacked.exe", packed.e_minalloc), &unpacked).unwrap();
+    assert_eq!(unpacked.e_minalloc, 0);
+}
+
+#[test]
 fn test_bad_exepack_signature() {
     let mut sample = packed_sample();
     store_u16le(&mut sample.body, usize::from(sample.e_cs) * 16 + 16, 0x1234);

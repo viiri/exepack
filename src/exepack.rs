@@ -101,6 +101,9 @@ pub enum FormatError {
     /// The compressed size is too large to store in the `cs` field of the EXE
     /// header.
     CompressedSizeTooLarge { compressed_len: usize },
+    /// The necessary `e_minalloc` value is too large to represent in the
+    /// EXE header.
+    MinAllocTooLarge { minalloc: usize },
     /// The stack pointer is too large to represent in the `e_ss` and `e_sp`
     /// fields of the EXE header.
     StackPointerTooLarge { stack_pointer: usize },
@@ -145,6 +148,8 @@ impl fmt::Display for FormatError {
                 write!(f, "uncompressed size {} is too large to represent", uncompressed_len),
             FormatError::CompressedSizeTooLarge { compressed_len } =>
                 write!(f, "compressed size {} is too large to represent", compressed_len),
+            FormatError::MinAllocTooLarge { minalloc } =>
+                write!(f, "e_minalloc value {:#x} is too large to represent", minalloc),
             FormatError::StackPointerTooLarge { stack_pointer } =>
                 write!(f, "stack pointer {:#x} is too large to represent", stack_pointer),
         }
@@ -629,11 +634,14 @@ pub fn pack(exe: &exe::Exe) -> Result<exe::Exe, FormatError> {
     // Finally, the packed relocation table.
     body.extend_from_slice(&relocs_buf);
 
-    // Now that we know how big the output will be, we can build the output EXE.
     // The code segment points at the EXEPACK header, immediately after the
     // compressed data.
     let e_cs = paras(compressed.len()).try_into()
         .or(Err(FormatError::CompressedSizeTooLarge { compressed_len: compressed.len() }))?;
+    // The code offset points at the beginning of the stub, just after the
+    // EXEPACK header.
+    let e_ip = HEADER_LEN;
+
     // The first thing the decompression stub does is copy the entire EXEPACK
     // block (including the EXEPACK header, the stub, and the packed relocations
     // table) to a higher region of memory, so that the decompression process
@@ -680,12 +688,52 @@ pub fn pack(exe: &exe::Exe) -> Result<exe::Exe, FormatError> {
             Err(FormatError::StackPointerTooLarge { stack_pointer: stack_segment*16 + usize::from(STACK_SIZE) })?
         }
     };
+
+    // The e_minalloc field of the EXE header is something like the BSS section
+    // in a Unix executable. It specifies an amount of extra memory to allocate
+    // after the program text, before running it. It is as if the program text
+    // had an extra chunk of uninitialized memory appended to it, that doesn't
+    // actually have to be stored in the file on disk.
+    //
+    // We need to ensure that e_minalloc is large enough to encompass all the
+    // memory the program may ever use, whether during EXEPACK decompression or
+    // during subsequent execution of the decompressed program. If the input EXE
+    // had a sufficiently large e_minalloc, we do not have to increase
+    // e_minalloc on output, because the scratch space needed for EXEPACK
+    // decompression fits within it. But if not, we must adjust e_minalloc
+    // somewhat. Typically with compression, e_minalloc increases, but
+    // e_minalloc may also decrease if the input is not compressible: the
+    // compressed data takes up some of the space that was formerly claimed by
+    // e_minalloc.
+    //
+    // The maximum amount of memory the program may use is the maximum of:
+    //   uncompressed.len() + exe.e_minalloc*16
+    //   uncompressed.len() + exepack_size*16 + STACK_SIZE*16
+    //           body.len() + exepack_size*16 + STACK_SIZE*16
+    // From this, subtract body.len() to find the number of bytes that
+    // e_minalloc needs to represent.
+    //
+    // Microsoft EXEPACK.EXE 4.00 does not support the case that body.len() >
+    // uncompressed.len(), eliminating the third case above and leaving the
+    // simpler computation:
+    //   uncompressed.len() + max(exe.e_minalloc*16, exepack_size*16 + STACK_SIZE*16) - body.len()
+    // Incidentally Microsoft EXEPACK.EXE 4.00 does not check for overflow. If
+    // you give it a file with e_minalloc = 0xffff, it will produce an output
+    // file where the sum of the data size and e_minalloc*16 is much smaller.
+    let e_minalloc = {
+        let minalloc = cmp::max(
+            paras(uncompressed.len()) + usize::from(exe.e_minalloc),
+            paras(cmp::max(uncompressed.len(), body.len())) + paras(exepack_size) + paras(usize::from(STACK_SIZE)),
+        ) - paras(body.len());
+        u16::try_from(minalloc)
+            .or(Err(FormatError::MinAllocTooLarge { minalloc }))?
+    };
+
     Ok(exe::Exe {
-        e_minalloc: exe.e_minalloc,
+        e_minalloc: e_minalloc,
         e_maxalloc: exe.e_maxalloc,
         e_ss, e_sp,
-        e_ip: HEADER_LEN, // Stub begins just after the EXEPACK header.
-        e_cs,
+        e_ip, e_cs,
         e_ovno: exe.e_ovno,
         body,
         relocs: Vec::new(), // No relocations at the EXEPACK layer.
@@ -816,9 +864,40 @@ pub fn unpack(exe: &exe::Exe) -> Result<exe::Exe, FormatError> {
     // Now let's actually decompress the buffer.
     decompress(&mut body, compressed_len, uncompressed_len)?;
 
+    // Adjust the output e_minalloc to maintain the equality
+    //   paras(exe.body.len()) + exe.e_minalloc*16 == paras(out.body.len() + out.e_minalloc*16
+    // The compressor will have similarly adjusted e_minalloc in the compressed
+    // file, though in that direction it's not necessarily an equality: the
+    // overhead of the EXEPACK block may require increasing the sum of sizes
+    // beyond that of the uncompressed input file.
+    //
+    // UNP 4.11 does essentially the same computation, though with a special
+    // case for input files that require less than 0xe00 total bytes of memory.
+    // UNP's naming convention is e_minalloc→MinParMem, body.len()→ExeImageSz.
+    // Ignoring the special case, the formula is:
+    //   out_MinParMem = in_MinParMem - ((out_ExeImageSz+1)/16 - in_ExeImageSz/16)
+    // See the MoreStrucInfo label in u4.asm (https://bencastricum.nl/unp/unp4-src.zip),
+    // which does (including the special case):
+    //   TotalMem = max(0x1000, in_ExeImageSz/16 + EXTRAMEM + in_MinParMem)
+    // and the CalcSize label, which does:
+    //   out_MinParMem = TotalMem - EXTRAMEM - (out_ExeImageSz+1)/16
+    // UNP does not round in_ExeImageSz and out_ExeImageSz+1 to a multiple of 16
+    // bytes, so its computed out_MinParMem may be 1 paragraph shorter than that
+    // computed by this program.
+    let e_minalloc = {
+        let (mut minalloc, overflow) = (paras(exe.body.len()) + usize::from(exe.e_minalloc))
+            .overflowing_sub(paras(body.len()));
+        if overflow {
+            eprintln!("warning: e_minalloc underflow: was {}, would become {}", exe.e_minalloc, minalloc as isize);
+            minalloc = 0;
+        }
+        u16::try_from(minalloc)
+            .or(Err(FormatError::MinAllocTooLarge { minalloc }))?
+    };
+
     // Finally, construct a new EXE.
     Ok(exe::Exe {
-        e_minalloc: exe.e_minalloc,
+        e_minalloc,
         e_maxalloc: exe.e_maxalloc,
         e_ss: header.real_ss,
         e_sp: header.real_sp,

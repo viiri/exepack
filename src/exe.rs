@@ -189,23 +189,6 @@ pub struct Exe {
     // related to the "container" aspects of EXE. Other fields like e_cblp,
     // e_cp, and e_cparhdr, which depend on the size of the body and the number
     // of relocations, are re-computed as needed.
-    //
-    // We copy the e_minalloc and e_maxalloc fields from input to output. UNP
-    // similarly copies e_maxalloc from input to output, but for e_minalloc
-    // (which it calls MinParMem), it computes a new value as follows:
-    //  out_MinParMem = in_MinParMem - (out_ExeImageSz/16 - in_ExeImageSz/16)
-    // where in_ExeImageSz and out_ExeImageSz are the size in bytes of the
-    // compressed and decompressed programs, excluding the EXE header. See the
-    // MoreStrucInfo label in u4.asm (https://bencastricum.nl/unp/unp4-src.zip),
-    // which does
-    //  TotalMem = in_ExeImageSz/16 + EXTRAMEM + in_MinParMem
-    // and the CalcSize label, which does
-    //  out_MinParMem = TotalMem - EXTRAMEM - out_ExeImageSz/16
-    // I suppose the logic here is that the EXEPACK compressor would have taken
-    // the e_minalloc of the uncompressed original file, and increased it by the
-    // number of paragraphs by which the size of the uncompressed file exceeds
-    // the size of the compressed file. Once decompressed, that additional
-    // amount of memory is no longer required.
     pub e_minalloc: u16,
     pub e_maxalloc: u16,
     pub e_ss: u16,
