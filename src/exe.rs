@@ -125,6 +125,15 @@ fn discard<R: Read + ?Sized>(r: &mut R, n: u64) -> io::Result<u64> {
     })
 }
 
+/// Returns the number of 512-byte pages needed to represent `n`, rounded up.
+fn pages(n: usize) -> usize {
+    if n % 512 == 0 {
+        n / 512
+    } else {
+        n / 512 + 1
+    }
+}
+
 /// Converts a `(e_cblp, e_cp)` tuple into a single length value. Returns `None`
 /// if the inputs are an invalid encoding (encode a negative length, or have
 /// `e_cblp` > 511).
@@ -143,8 +152,8 @@ fn decode_exe_len(e_cblp: u16, e_cp: u16) -> Option<u64> {
 /// header fields. Returns `None` if the `len` is too large to be represented
 /// (> 0x1fffe00).
 fn encode_exe_len(len: usize) -> Option<(u16, u16)> {
-    // Number of 512-byte blocks needed to store len, rounded up.
-    let e_cp = u16::try_from((len + 511) / 512).ok()?;
+    // Number of 512-byte pages needed to store len, rounded up.
+    let e_cp = u16::try_from(pages(len)).ok()?;
     // Number of bytes remaining after all the full blocks.
     let e_cblp = u16::try_from(len % 512).unwrap();
     Some((e_cblp, e_cp))
@@ -322,7 +331,7 @@ impl Exe {
     fn write_header<W: Write + ?Sized>(&self, w: &mut W) -> Result<u64, Error> {
         // http://www.delorie.com/djgpp/doc/exe/: "Note that some OSs and/or
         // programs may fail if the header is not a multiple of 512 bytes."
-        let num_header_pages = ((usize::from(HEADER_LEN) + 4 * self.relocs.len()) + 511) / 512;
+        let num_header_pages = pages(usize::from(HEADER_LEN) + 4 * self.relocs.len());
         let exe_len = num_header_pages * 512 + self.body.len();
         let (e_cblp, e_cp) = encode_exe_len(exe_len)
             .ok_or(FormatError::TooLong { len: exe_len })?;
@@ -406,6 +415,16 @@ mod tests {
         assert_eq!(discard(&mut r, 4).unwrap(), 4);
         assert_eq!(r, b"bcde");
         assert_eq!(discard(&mut r, 5).unwrap_err().kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn test_pages() {
+        assert_eq!(pages(0), 0);
+        assert_eq!(pages(1), 1);
+        assert_eq!(pages(511), 1);
+        assert_eq!(pages(512), 1);
+        assert_eq!(pages(513), 2);
+        assert_eq!(pages(std::usize::MAX), std::usize::MAX / 512 + 1);
     }
 
     fn save_exe<P: AsRef<path::Path>>(path: P, contents: &[u8]) -> io::Result<()> {

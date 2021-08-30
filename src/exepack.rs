@@ -541,6 +541,16 @@ fn round_up(n: usize, m: usize) -> Option<usize> {
     n.checked_add((m - n % m) % m)
 }
 
+/// Returns the number of 16-byte paragraphs needed to represent `n`, rounded
+/// up.
+fn paras(n: usize) -> usize {
+    if n % 16 == 0 {
+        n / 16
+    } else {
+        n / 16 + 1
+    }
+}
+
 /// Encode a compressed relocation table.
 fn encode_relocs(buf: &mut Vec<u8>, relocs: &[Pointer]) -> Result<(), FormatError> {
     // http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK#Relocation_Table
@@ -608,7 +618,7 @@ pub fn pack(exe: &exe::Exe) -> Result<exe::Exe, FormatError> {
             .or(Err(FormatError::ExepackSizeTooLarge { exepack_size }))?,
         real_sp: exe.e_sp,
         real_ss: exe.e_ss,
-        dest_len: (uncompressed.len() / 16).try_into()
+        dest_len: paras(uncompressed.len()).try_into()
             .or(Err(FormatError::UncompressedSizeTooLarge { uncompressed_len: uncompressed.len() }))?,
         skip_len: 1,
     }.write(&mut body);
@@ -622,7 +632,7 @@ pub fn pack(exe: &exe::Exe) -> Result<exe::Exe, FormatError> {
     // Now that we know how big the output will be, we can build the output EXE.
     // The code segment points at the EXEPACK header, immediately after the
     // compressed data.
-    let e_cs = (compressed.len() / 16).try_into()
+    let e_cs = paras(compressed.len()).try_into()
         .or(Err(FormatError::CompressedSizeTooLarge { compressed_len: compressed.len() }))?;
     // The first thing the decompression stub does is copy the entire EXEPACK
     // block (including the EXEPACK header, the stub, and the packed relocations
@@ -653,10 +663,8 @@ pub fn pack(exe: &exe::Exe) -> Result<exe::Exe, FormatError> {
     // suitable for /EXEPACK; relink without":
     // https://archive.org/details/bitsavers_ibmpcdos15lReferenceJul88_10507385/page/n128?q=EXEPACK
     let (e_ss, e_sp) = {
-        let stack_segment = round_up(cmp::max(uncompressed.len(), body.len()), 16)
-            .and_then(|x| round_up(exepack_size, 16)
-                .and_then(|y| x.checked_add(y))
-            ).and_then(|z| Some(z / 16)).unwrap();
+        let stack_segment = paras(cmp::max(uncompressed.len(), body.len()))
+            .checked_add(paras(exepack_size)).unwrap();
         if let Ok(e_ss) = u16::try_from(stack_segment) {
             // We preferentially leave e_ss aligned so that e_sp == STACK_SIZE
             // exactly.
@@ -972,6 +980,16 @@ mod tests {
         ] {
             assert_eq!(&decompress_new(input, input.len(), dst).unwrap(), &output);
         }
+    }
+
+    #[test]
+    fn test_paras() {
+        assert_eq!(paras(0), 0);
+        assert_eq!(paras(1), 1);
+        assert_eq!(paras(15), 1);
+        assert_eq!(paras(16), 1);
+        assert_eq!(paras(17), 2);
+        assert_eq!(paras(std::usize::MAX), std::usize::MAX / 16 + 1);
     }
 
     #[test]
