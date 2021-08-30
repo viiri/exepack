@@ -50,6 +50,9 @@ const SIGNATURE: u16 = 0x4252; // "RB"
 /// The size of the EXEPACK header that we write.
 pub const HEADER_LEN: usize = 18;
 
+/// How much stack space to reserve for the stub's use.
+pub const STACK_SIZE: u16 = 0x80;
+
 /// Our pre-assembled decompression stub.
 pub const STUB: [u8; 283] = *include_bytes!("stub.bin");
 
@@ -621,37 +624,52 @@ pub fn pack(exe: &exe::Exe) -> Result<exe::Exe, FormatError> {
     // compressed data.
     let e_cs = (compressed.len() / 16).try_into()
         .or(Err(FormatError::CompressedSizeTooLarge { compressed_len: compressed.len() }))?;
-    // When the decompression stub runs, it will copy itself to a location
-    // higher in memory (past the end of the uncompressed data size) so that the
-    // decompression process doesn't overwrite it while it is running. But we
-    // also have to account for the possibility that the uncompressed data size
-    // lies in the middle of the decompression stub--in that case the stub would
-    // be overwritten while it is running not by the decompression, but by its
-    // own copy operation. Our decompression stub knows about this possibility
-    // and will copy itself to the end of uncompressed data or to the end of
-    // itself, whichever is greater. We need to do the same here with regard to
-    // the stack segment, placing it at least exepack_size past whichever
-    // address the stub will copy itself to.
-    // The Microsoft EXEPACK stubs don't handle the latter situation and the
-    // compressor instead refuses to work when it arises: "L1114 file not
-    // suitable for /EXEPACK; relink without".
+    // The first thing the decompression stub does is copy the entire EXEPACK
+    // block (including the EXEPACK header, the stub, and the packed relocations
+    // table) to a higher region of memory, so that the decompression process
+    // doesn't overwrite the stub while it is running. When the input has
+    // compressed sufficiently well that the compressed data and the EXEPACK
+    // block are together smaller than the original data, it suffices to copy
+    // the block to just past the uncompressed data size (i.e. to dest_len*16).
+    //                           dest_len*16 |
+    //   [ compressed ][ EXEPACK orig ]----->[ EXEPACK copy ][stack]
+    //                                       |
+    // But if compression reduced the size of the data only slightly or even
+    // enlarged it, the source and destination buffers for the EXEPACK block
+    // copy operation would overlap. Our decompression stub knows about this
+    // case, and will copy itself to the end of the uncompressed data buffer, or
+    // to the end of itself, whichever is greater.
+    //                           dest_len*16 |
+    //   [      compressed      ][ EXEPACK orig ][ EXEPACK copy ][stack]
+    //   [             compressed             ][ EXEPACK orig ][ EXEPACK copy ][stack]
+    //                                       |
+    // We must do the same here with regard to the stack segment, placing it
+    // exepack_size beyond whatever address the stub will copy itself to.
+    //
+    // The Microsoft stubs do not handle the latter situation, and therefore
+    // compressors that use those stubs avoid producing output files that would
+    // cause a problem. Microsoft EXEPACK.EXE 4.00 refuses to work: "exepack:
+    // file not suitable for packing". See also IBM Linker/2's "L1114 file not
+    // suitable for /EXEPACK; relink without":
     // https://archive.org/details/bitsavers_ibmpcdos15lReferenceJul88_10507385/page/n128?q=EXEPACK
     let (e_ss, e_sp) = {
-        let len = cmp::max(uncompressed.len(), body.len()) + exepack_size;
-        // Reserve 16 bytes for the stack. The stub doesn't need much.
-        let stack_pointer = round_up(len, 16).unwrap() + 16;
-        // Now, shift as many bits as possible from the segment to the offset,
-        // because we have to encode e_sp in the EXE header and we can compress
-        // slightly larger files if it's smaller.
-        if let Ok(e_sp) = u16::try_from(stack_pointer) {
-            (0u16, e_sp)
+        let stack_segment = round_up(cmp::max(uncompressed.len(), body.len()), 16)
+            .and_then(|x| round_up(exepack_size, 16)
+                .and_then(|y| x.checked_add(y))
+            ).and_then(|z| Some(z / 16)).unwrap();
+        if let Ok(e_ss) = u16::try_from(stack_segment) {
+            // We preferentially leave e_ss aligned so that e_sp == STACK_SIZE
+            // exactly.
+            (e_ss, STACK_SIZE)
+        } else if let Ok(e_sp) = u16::try_from(usize::from(STACK_SIZE) + (stack_segment - 0xffff)*16) {
+            // But if that would make e_ss too large to represent, shift some
+            // bits from e_ss to e_sp. This permits us to compress slightly
+            // larger files.
+            (0xffff, e_sp)
         } else {
-            let e_sp = 0xfff0 | (stack_pointer & 0xf);
-            let e_ss = (stack_pointer - e_sp) >> 4;
-            (
-                e_ss.try_into().or(Err(FormatError::StackPointerTooLarge { stack_pointer }))?,
-                e_sp.try_into().unwrap(),
-            )
+            // But if even that fails, the stack pointer is just too large to
+            // represent.
+            Err(FormatError::StackPointerTooLarge { stack_pointer: stack_segment*16 + usize::from(STACK_SIZE) })?
         }
     };
     Ok(exe::Exe {

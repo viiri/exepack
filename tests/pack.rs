@@ -123,8 +123,9 @@ fn test_lengths() {
     let exepack_base_size = exepack::HEADER_LEN + exepack::STUB.len() + 32;
 
     // Maximum size compressible inputs.
-    // The main constraint here is the dest_len field, representing the size of
-    // the uncompressed output.
+
+    // The bottleneck here is the dest_len field in the EXEPACK header,
+    // representing the size of the uncompressed output.
     {
         let len = 16 * 0xffff;
         let exe = make_compressible_exe(len, 0);
@@ -137,18 +138,24 @@ fn test_lengths() {
         want_error!(exepack::pack(&exe));
     }
 
-    // Relocations take up space, 2 bytes each; however part of the additional
-    // space can be shared within the decompression buffer (below dest_len). The
-    // packed relocation format allows for up to 16*0xffff relocations, but of
-    // course an input EXE can only have up to 0xffff, and furthermore we are
-    // limited to the entire EXEPACK block being 0xffff bytes or less.
+    // Each relocation adds 2 bytes to exepack_size, which has a maximum value
+    // of 0xffff. As we add relocations, eventually the bottleneck becomes not
+    // dest_len but exepack_size in the EXEPACK header, along with e_ss and e_sp
+    // in the EXE header, which point at dest_len*16 + ceil(exepack_size/16)*16.
     {
         let num_relocs = (0xffff - exepack_base_size) / 2;
-        // (exepack_base_size + 2*num_relocs) is now either 0xfffe or 0xffff, which
-        // puts the stack pointer at dest_len + 0x10000 + 16. (The stub uses a
-        // 16-byte stack.) The maximum representable stack pointer is ffff:fff0, so
-        // the maximum dest_len = 16*0xffff+0xfff0 - (0x10000+16) = 16*0xffff - 32.
-        let len = 16 * 0xfffd;
+        // exepack_size = exepack_base_size + 2*num_relocs is now either 0xfffe
+        // or 0xffff, which is as large as it can be. Now we must additionaly
+        // satisfy the constraint of the EXE header stack pointer, by making
+        // dest_len just small enough to permit the stack pointer to fit. In
+        // this situation, with an compressible body, the compressed data and
+        // the EXEPACK block both fit beneath dest_len, so the EXEPACK block
+        // will be copied to dest_len exactly, with the stack allocated just
+        // beyond the copy. The maximum stack pointer is ffff:ffff, so we have
+        //   round_up(len) + round_up(exepack_size) + STACK_SIZE <= ffff:ffff
+        //   round_up(len) <= ffff:ffff - round_up(exepack_size) - STACK_SIZE
+        //   len <= round_down(ffff:ffff - round_up(exepack_size) - STACK_SIZE)
+        let len = (0xffff*16 + 0xffff - 0x10000 - usize::from(exepack::STACK_SIZE)) / 16 * 16;
         let exe = make_compressible_exe(len, num_relocs);
         common::maybe_save_exe("tests/maxlen_maxrelocs_compressible.exe", &exe).unwrap();
         let out = exepack::pack(&exe).unwrap();
@@ -164,10 +171,11 @@ fn test_lengths() {
     }
 
     // Maximum size incompressible inputs.
-    // The main constraint here is no longer dest_len, but e_cs in the EXE
-    // header, which points to the start of the EXEPACK block, which comes right
-    // after the end of compressed data. So the compressed data (including the
-    // padding to 16 bits) cannot be larger than 16*0xffff. It turns out that
+
+    // The bottleneck here is no longer dest_len, but e_cs in the EXE header,
+    // which points to the start of the EXEPACK block, immediately after the end
+    // of compressed data. The compressed data (including the padding to a
+    // multiple of 16 bytes) cannot be larger than 16*0xffff. As it turns out,
     // the largest incompressible stream we can represent in that space has
     // length 16*0xffff-4, with the 4 trailing bytes 00 04 00 b1 encoding the
     // trailing 4 bytes of 0x00 padding.
@@ -183,13 +191,23 @@ fn test_lengths() {
         want_error!(exepack::pack(&exe));
     }
 
-    // Relocations take up additional space. The size of the EXEPACK block
-    // rounds up to 0x10000, so our ceiling is now 16*0xeffd, and the same logic
-    // applies as earlier with respect to subtracting 32 for the stack pointer
-    // and subtracting 4 for compression overhead.
+    // Now also test an incompressible input with the maximum number of
+    // relocations. Here again, the bottleneck is exepack_size in the EXEPACK
+    // header, and e_ss and e_sp in the EXE header.
     {
         let num_relocs = (0xffff - exepack_base_size) / 2;
-        let len = 16 * 0xeffd - 4;
+        // With an incompressible body, the compressed data and the EXEPACK
+        // block overlap dest_len before decompression. This means the
+        // decompression stub will copy the EXEPACK block not to dest_len, but
+        // to after itself. We must account, therefore, for *two* quantities of
+        // exepack_size after dest_len, before the space allocated for the
+        // stack. The same logic applies as above with subtracting 4 for
+        // compression overhead.
+        //   round_up(len + 4) + round_up(exepack_size) + round_up(exepack_size) + STACK_SIZE <= ffff:ffff
+        //   round_up(len + 4) <= ffff:ffff - 2*round_up(exepack_size) - STACK_SIZE
+        //   len + 4 <= round_down(ffff:ffff - 2*round_up(exepack_size) - STACK_SIZE)
+        //   len <= round_down(ffff:ffff - 2*round_up(exepack_size) - STACK_SIZE) - 4
+        let len = (0xffff*16 + 0xffff - 0x20000 - usize::from(exepack::STACK_SIZE)) / 16 * 16 - 4;
         let exe = make_incompressible_exe(len, num_relocs);
         common::maybe_save_exe("tests/maxlen_maxrelocs_incompressible.exe", &exe).unwrap();
         let out = exepack::pack(&exe).unwrap();

@@ -5,6 +5,10 @@ mode had only returned the input executable essentially unchanged (after
 normalizing the EXE header and possibly truncating the file to the size
 specified there).
 
+Compressed executables now use a stack size of 128 bytes, up from 16
+bytes. LINK.EXE /EXEPACK and EXEPACK.EXE also produce executables that
+use a stack of 128 bytes.
+
 
 ## v1.0.0 2020-03-07
 
