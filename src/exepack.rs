@@ -565,21 +565,21 @@ fn encode_relocs(buf: &mut Vec<u8>, relocs: &[Pointer]) -> Result<(), FormatErro
 
 /// Compresses an input `exe::Exe` and returns the result as a new `exe::Exe`.
 pub fn pack(exe: &exe::Exe) -> Result<exe::Exe, FormatError> {
-    let mut uncompressed = exe.body.clone();
-    // Pad uncompressed to a multiple of 16 bytes.
-    {
-        let len = round_up(uncompressed.len(), 16).unwrap();
-        uncompressed.resize(len, 0x00);
-    }
+    let uncompressed = {
+        let mut v = exe.body.clone();
+        // Pad to a multiple of 16 bytes.
+        v.resize(round_up(v.len(), 16).unwrap(), 0x00);
+        v
+    };
     assert_eq!(uncompressed.len() % 16, 0);
 
-    let mut compressed = Vec::new();
-    compress(&mut compressed, &uncompressed);
-    // Pad compressed to a multiple of 16 bytes.
-    {
-        let len = round_up(compressed.len(), 16).unwrap();
-        compressed.resize(len, 0xff);
-    }
+    let compressed = {
+        let mut v = Vec::new();
+        compress(&mut v, &uncompressed);
+        // Pad to a multiple of 16 bytes.
+        v.resize(round_up(v.len(), 16).unwrap(), 0xff);
+        v
+    };
     assert_eq!(compressed.len() % 16, 0);
 
     // Encode the packed relocation table now, because we will need to know its
