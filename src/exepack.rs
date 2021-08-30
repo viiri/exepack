@@ -248,7 +248,14 @@ fn compress(output: &mut Vec<u8>, input: &[u8]) {
     // we could re-use the 2 bytes cc 06 and compress as
     //      cc 06 00 b1
 
-    // The maximum length of a Copy or Fill command.
+    // The maximum length of a Copy or Fill command. The Microsoft stubs have a
+    // maximum command length of 0xfff0, because they use "rep stosb" and
+    // "rep movsb" instructions (which cannot write outside the bounds of the
+    // destination address's segment) on destination addresses engineered to
+    // leave at least 0xfff0 bytes before wrapping in the segment. Our stub
+    // works differently, and it can handle lengths up to the maximum.
+    // Maximum-length commands should be no problem for external decompressors,
+    // either.
     const MAX_LEN: u16 = 0xffff;
 
     #[derive(Clone, Copy)]
