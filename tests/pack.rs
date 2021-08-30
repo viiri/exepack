@@ -120,7 +120,7 @@ fn test_lengths() {
     }
 
     // The size of an EXEPACK block with no relocations.
-    let exepack_base_size = exepack::HEADER_LEN + exepack::STUB.len() + 32;
+    let exepack_base_size = usize::from(exepack::HEADER_LEN) + exepack::STUB.len() + 32;
 
     // Maximum size compressible inputs.
 

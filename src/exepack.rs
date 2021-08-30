@@ -48,7 +48,7 @@ use pointer::Pointer;
 const SIGNATURE: u16 = 0x4252; // "RB"
 
 /// The size of the EXEPACK header that we write.
-pub const HEADER_LEN: usize = 18;
+pub const HEADER_LEN: u16 = 18;
 
 /// How much stack space to reserve for the stub's use.
 pub const STACK_SIZE: u16 = 0x80;
@@ -598,7 +598,7 @@ pub fn pack(exe: &exe::Exe) -> Result<exe::Exe, FormatError> {
     body.extend_from_slice(&compressed);
 
     // Next, the 18-byte EXEPACK header.
-    let exepack_size = HEADER_LEN
+    let exepack_size = usize::from(HEADER_LEN)
         .checked_add(STUB.len()).unwrap()
         .checked_add(relocs_buf.len()).unwrap();
     Header {
@@ -676,7 +676,7 @@ pub fn pack(exe: &exe::Exe) -> Result<exe::Exe, FormatError> {
         e_minalloc: exe.e_minalloc,
         e_maxalloc: exe.e_maxalloc,
         e_ss, e_sp,
-        e_ip: HEADER_LEN.try_into().unwrap(), // Stub begins just after the EXEPACK header.
+        e_ip: HEADER_LEN, // Stub begins just after the EXEPACK header.
         e_cs,
         e_ovno: exe.e_ovno,
         body,
