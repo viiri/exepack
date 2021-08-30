@@ -19,7 +19,7 @@ ORG 18	; EXEPACK header is 18 bytes.
 real_IP		equ	0
 real_CS		equ	2
 mem_start	equ	4	; unused
-exepack_size	equ	6	; will have the value 283 + len(relocations)
+exepack_size	equ	6	; will have the value 18 + 283 + len(relocations)
 real_SP		equ	8
 real_SS		equ	10
 dest_len	equ	12
@@ -36,7 +36,7 @@ signature	equ	16	; unused
 ; * ds and es are set to the segment of the Program Segment Prefix
 ;   (PSP). The compressed data starts 256 bytes beyond that, at an
 ;   address we call mem_start.
-; * cs is set to real_IP (beginning of EXEPACK header).
+; * cs is set to the beginning of the EXEPACK header.
 ; * ip is set to copy_exepack_block.
 ; * ax contains a value that we must restore before jumping to the
 ;   decompressed program.
