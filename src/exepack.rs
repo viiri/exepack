@@ -48,7 +48,7 @@ use pointer::Pointer;
 const SIGNATURE: u16 = 0x4252; // "RB"
 
 /// The size of the EXEPACK header that we write.
-const HEADER_LEN: usize = 18;
+pub const HEADER_LEN: usize = 18;
 
 /// Our pre-assembled decompression stub.
 pub const STUB: [u8; 283] = *include_bytes!("stub.bin");
