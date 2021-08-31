@@ -34,12 +34,12 @@ BITS 16
 ORG 16	; EXEPACK header is 16 bytes.
 
 ; Offsets of fields in the EXEPACK header.
-real_IP		equ	0
-real_CS		equ	2
+real_ip		equ	0
+real_cs		equ	2
 mem_start	equ	4
 exepack_size	equ	6
-real_SP		equ	8
-real_SS		equ	10
+real_sp		equ	8
+real_ss		equ	10
 dest_len	equ	12
 signature	equ	14	; unused
 
@@ -47,7 +47,7 @@ signature	equ	14	; unused
 ; * ds and es are set to the segment of the Program Segment Prefix
 ;   (PSP). The compressed data starts 256 bytes beyond that, at an
 ;   address we call mem_start.
-; * cs is set to real_IP (beginning of EXEPACK header).
+; * cs is set to real_ip (beginning of EXEPACK header).
 ; * ip is set to copy_exepack_block.
 copy_exepack_block:
 	mov ax, es
@@ -180,19 +180,19 @@ apply_relocations:
 	jmp .relocation_written ; back to address loop
 .loop_end:
 	mov ax, bx		; ax = mem_start
-	mov di, [real_SP]	; di = real_SP
-	mov si, [real_SS]
-	add si, ax		; si = mem_start + real_SS
-	add [real_CS], ax	; real_CS += mem_start
+	mov di, [real_sp]	; di = real_sp
+	mov si, [real_ss]
+	add si, ax		; si = mem_start + real_ss
+	add [real_cs], ax	; real_cs += mem_start
 	sub ax, 0x10
 	mov ds, ax		; es = mem_start - 0x10 (segment of start of PSP)
 	mov es, ax		; es = mem_start - 0x10 (segment of start of PSP)
-	mov bx, real_IP		; bx points to the 4-byte long pointer real_CS:real_IP.
+	mov bx, real_ip		; bx points to the 4-byte long pointer real_cs:real_ip.
 	cli
-	mov ss, si		; ss = mem_start + real_SS
-	mov sp, di		; sp = real_SP
+	mov ss, si		; ss = mem_start + real_ss
+	mov sp, di		; sp = real_sp
 	sti
-	jmp far [cs:bx]		; jump to real_CS:real_IP
+	jmp far [cs:bx]		; jump to real_cs:real_ip
 
 error:
 	mov ah, 0x40		; ah=0x40 => write to file handle

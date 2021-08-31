@@ -16,12 +16,12 @@ ORG 18	; EXEPACK header is 18 bytes.
 
 ; Offsets of fields in the EXEPACK header.
 ; http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK#EXEPACK_variables
-real_IP		equ	0
-real_CS		equ	2
+real_ip		equ	0
+real_cs		equ	2
 mem_start	equ	4	; unused
 exepack_size	equ	6	; will have the value 18 + 283 + len(relocations)
-real_SP		equ	8
-real_SS		equ	10
+real_sp		equ	8
+real_ss		equ	10
 dest_len	equ	12
 skip_len	equ	14	; unused; will have the value 1
 signature	equ	16	; unused
@@ -104,7 +104,7 @@ dec_es_di:
 
 decompress:
 	; Skip past 0xff padding.
-	xor si, si		; ds:si = real_IP, just past the end of the compressed data + padding
+	xor si, si		; ds:si = real_ip, just past the end of the compressed data + padding
 .padding_loop:
 	call dec_ds_si
 	mov al, [ds:si]
@@ -191,20 +191,20 @@ apply_relocations:
 
 execute_decompressed_program:
 	mov ax, bx		; ax = mem_start
-	mov si, [real_SS]
-	add si, ax		; si = relocated real_SS
-	mov di, [real_SP]	; di = real_SP
-	add [real_CS], ax	; real_CS = relocated real_CS
+	mov si, [real_ss]
+	add si, ax		; si = relocated real_ss
+	mov di, [real_sp]	; di = real_sp
+	add [real_cs], ax	; real_cs = relocated real_cs
 	sub ax, 0x10
 	mov ds, ax		; ds = mem_start - 0x10 (start of PSP)
 	mov es, ax		; es = mem_start - 0x10 (start of PSP)
 	cli
-	mov ss, si		; ss = real_SS + mem_start
-	mov sp, di		; sp = real_SP
+	mov ss, si		; ss = real_ss + mem_start
+	mov sp, di		; sp = real_sp
 	sti
 	mov ax, bp		; restore original ax
-	mov bx, real_IP		; bx points to the 4-byte long pointer real_CS:real_IP.
-	jmp far [cs:bx]		; jump to real_CS:real_IP.
+	mov bx, real_ip		; bx points to the 4-byte long pointer real_cs:real_ip.
+	jmp far [cs:bx]		; jump to real_cs:real_ip.
 
 ; Pad to make the total size 283 bytes.
 TIMES	283-(relocation_entries-error)-($-$$)	nop
