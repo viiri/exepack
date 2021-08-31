@@ -1,5 +1,5 @@
 all: src/stub.bin
-	cargo build
+	cargo build --release
 
 clean:
 	rm -f src/stub.bin
