@@ -745,15 +745,15 @@ pub fn unpack(exe: &exe::Exe) -> Result<exe::Exe, FormatError> {
 
     // Compressed data starts immediately after the EXE header and ends at
     // cs:0000.
-    let mut work_buffer = exe.body.clone();
+    let mut body = exe.body.clone();
 
     // The EXEPACK header starts at cs:0000 and ends at cs:ip.
     let exepack_header_offset = usize::from(exe.e_cs) * 16;
     let exepack_header_len = usize::from(exe.e_ip);
-    if exepack_header_offset > work_buffer.len() {
+    if exepack_header_offset > body.len() {
         return Err(FormatError::HeaderPastEndOfFile { offset: exepack_header_offset, len: exepack_header_len });
     }
-    let mut exepack_header = work_buffer.split_off(exepack_header_offset);
+    let mut exepack_header = body.split_off(exepack_header_offset);
 
     // The decompression stub starts at cs:ip.
     if exepack_header_len > exepack_header.len() {
@@ -808,13 +808,13 @@ pub fn unpack(exe: &exe::Exe) -> Result<exe::Exe, FormatError> {
     // to clobber itself while it is still running. But it doesn't. (Our custom
     // STUB has extra logic to handle that case, but the Microsoft stubs do
     // not.)
-    let compressed_len = work_buffer.len().checked_sub(skip_len)
+    let compressed_len = body.len().checked_sub(skip_len)
         .ok_or(FormatError::SkipLenInvalid { skip_len: header.skip_len })?;
     let uncompressed_len = (usize::from(header.dest_len) * 16).checked_sub(skip_len)
         .ok_or(FormatError::SkipLenInvalid { skip_len: header.skip_len })?;
 
     // Now let's actually decompress the buffer.
-    decompress(&mut work_buffer, compressed_len, uncompressed_len)?;
+    decompress(&mut body, compressed_len, uncompressed_len)?;
 
     // Finally, construct a new EXE.
     Ok(exe::Exe {
@@ -825,7 +825,7 @@ pub fn unpack(exe: &exe::Exe) -> Result<exe::Exe, FormatError> {
         e_ip: header.real_ip,
         e_cs: header.real_cs,
         e_ovno: exe.e_ovno,
-        body: work_buffer,
+        body,
         relocs,
     })
 }
