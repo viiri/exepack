@@ -219,7 +219,7 @@ fn test_lengths() {
     // output.
     macro_rules! want_error {
         ($r:expr) => {
-            assert!($r.is_err(), $r);
+            assert!($r.is_err(), "{:?}", $r);
         };
     }
 
