@@ -2,7 +2,7 @@
 # It is not intended for manual editing.
 [[package]]
 name = "exepack"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "getopts 0.2.18 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
