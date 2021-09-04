@@ -1,3 +1,10 @@
+## v1.2.0
+
+Output files are now written with the correct value for the e_csum
+(checksum) field. Formerly, the value of e_csum in written files was
+always 0x0000. The checksums of input files continue to be ignored.
+
+
 ## v1.1.0 2021-09-01
 
 Compress mode now works. Before this release, because of a bug, compress

@@ -181,6 +181,57 @@ fn write_relocs<W: Write + ?Sized>(w: &mut W, relocs: &[Pointer]) -> io::Result<
     Ok(n)
 }
 
+/// Incremental calculator of the MZ executable checksum algorithm.
+///
+/// # References
+///
+/// * [Q71971: Calculating the Checksum for a Segmented-Executable File](https://jeffpar.github.io/kbarchive/kb/071/Q71971/)
+#[derive(Debug)]
+struct Checksum {
+    sum: u16,  // Accumulated checksum so far.
+    odd: bool, // Whether we have seen only the low-order byte of the latest word.
+}
+
+impl Checksum {
+    /// Creates a new `Checksum`.
+    pub fn new() -> Self {
+        Self { sum: 0u16, odd: false }
+    }
+
+    /// Accumulates the contents of `input` into the running checksum state.
+    pub fn update(&mut self, input: impl AsRef<[u8]>) {
+        let mut input = input.as_ref();
+        if input.len() == 0 {
+            return;
+        }
+
+        // If we have only processed the low-order byte of the latest word,
+        // treat the first byte of the input as its high-order byte.
+        if self.odd {
+            self.sum = self.sum.wrapping_add(u16::from(input[0])<<8);
+            input = &input[1..];
+        }
+        self.odd = false;
+
+        // Process the rest of the input, except for perhaps a final odd byte.
+        let iter = input.chunks_exact(2);
+        let remainder = iter.remainder();
+        self.sum = iter.fold(self.sum, |sum, s| sum.wrapping_add(u16::from_le_bytes(s.try_into().unwrap())));
+
+        // If there's a final odd byte, add it as the low-order byte of a word
+        // to the sum, and set the odd flag.
+        if remainder.len() == 1 {
+            self.sum = self.sum.wrapping_add(u16::from(remainder[0]));
+            self.odd = true;
+        };
+    }
+
+    /// Returns the checksum of the input processed so far.
+    pub fn finalize(&self) -> u16 {
+        !self.sum
+    }
+}
+
 /// A 16-bit MZ format DOS executable. It omits any data that may have appeared
 /// after the end of the size stated in the EXE header.
 #[derive(Debug)]
@@ -232,8 +283,8 @@ impl Exe {
         let e_maxalloc = read_u16le(input)?;
         let e_ss = read_u16le(input)?;
         let e_sp = read_u16le(input)?;
-        // Ignore the checksum. In practice, nothing verifies EXE checksums (not
-        // even MS-DOS), hence many checksums are incorrect.
+        // Ignore the checksum on input. In practice, nothing verifies EXE
+        // checksums (not even MS-DOS), hence many checksums are incorrect.
         //
         // https://jeffpar.github.io/kbarchive/kb/071/Q71971/
         // "Note that Microsoft LINK does not correctly calculate the checksum
@@ -310,8 +361,8 @@ impl Exe {
     }
 
     /// Serializes the `Exe` header to `w`, including padding to a multiple of
-    /// 512 bytes.
-    fn write_header<W: Write + ?Sized>(&self, w: &mut W) -> Result<u64, Error> {
+    /// 512 bytes. `e_csum` is the value to write for the `e_csum` field.
+    fn write_header<W: Write + ?Sized>(&self, w: &mut W, e_csum: u16) -> Result<u64, Error> {
         // http://www.delorie.com/djgpp/doc/exe/: "Note that some OSs and/or
         // programs may fail if the header is not a multiple of 512 bytes."
         let num_header_pages = pages(usize::from(HEADER_LEN) + 4 * self.relocs.len());
@@ -333,23 +384,7 @@ impl Exe {
         n += write_u16le(w, self.e_maxalloc)?;
         n += write_u16le(w, self.e_ss)?;
         n += write_u16le(w, self.e_sp)?;
-        // Hardcode the checksum to 0. Computing the checksum would prevent
-        // one-pass encoding of the EXE file (i.e., we would need to seek as
-        // well as write); and in practice EXE checksums are ignored. UNP
-        // similarly hardcodes the output checksum to 0, as does LINK.EXE 5.3 or
-        // later.
-        //
-        // https://jeffpar.github.io/kbarchive/kb/071/Q71971/ has the clearest
-        // description of how to compute the checksum I know of: "the one's
-        // complement of the summation of all words in the .EXE file. ... During
-        // this addition, LINK gives the Complemented Checksum word (12-13H) a
-        // temporary value of 0000H. If the file consists of an odd number of
-        // bytes, then the final byte is treated as a word with a high byte of
-        // 00H." But even this description is ambiguous as to whether "all words
-        // in the .EXE file" uses the size of the file in the filesystem, or the
-        // potentially smaller size specified in the e_cblp and e_cp fields of
-        // the EXE header.
-        n += write_u16le(w, 0)?; // e_csum
+        n += write_u16le(w, e_csum)?;
         n += write_u16le(w, self.e_ip)?;
         n += write_u16le(w, self.e_cs)?;
         n += write_u16le(w, HEADER_LEN)?;
@@ -369,8 +404,19 @@ impl Exe {
     /// Serializes the `Exe` structure to `w`. Returns the number of bytes
     /// written.
     pub fn write<W: Write + ?Sized>(&self, w: &mut W) -> Result<u64, Error> {
+        // First, find what the checksum of the file would be if we were to
+        // write it with a zero e_csum.
+        let e_csum = {
+            let mut v = Vec::new();
+            self.write_header(&mut v, 0)?;
+            let mut c = Checksum::new();
+            c.update(&v);
+            c.update(&self.body);
+            c.finalize()
+        };
         let mut n: u64 = 0;
-        n += self.write_header(w)?;
+        // Now, write the header with the checksum computed earlier.
+        n += self.write_header(w, e_csum)?;
         w.write_all(&self.body)
             .map_err(|err| annotate_io_error(err, "writing EXE body"))?;
         n += u64::try_from(self.body.len()).unwrap();
@@ -408,6 +454,48 @@ mod tests {
         assert_eq!(pages(512), 1);
         assert_eq!(pages(513), 2);
         assert_eq!(pages(std::usize::MAX), std::usize::MAX / 512 + 1);
+    }
+
+    // checksum of a single flat byte slice
+    fn checksum(p: &[u8]) -> u16 {
+        let mut c = Checksum::new();
+        c.update(p);
+        c.finalize()
+    }
+
+    #[test]
+    fn test_checksum() {
+        {
+            let c = Checksum::new();
+            assert_eq!(c.finalize(), !0u16);
+        }
+
+        for (data, expected) in &[
+            (vec![], !0u16),
+            (vec![vec![1]], !1u16),
+            (vec![vec![], vec![1]], !1u16),
+            (vec![vec![1], vec![]], !1u16),
+            (vec![vec![1, 1]], !0x0101u16),
+            (vec![vec![], vec![1, 1]], !0x0101u16),
+            (vec![vec![1], vec![1]], !0x0101u16),
+            (vec![vec![1, 1], vec![]], !0x0101u16),
+            (vec![vec![1, 0], vec![1]], !2u16),
+            (vec![vec![1], vec![0, 1]], !2u16),
+            (vec![vec![1, 1], vec![1, 1]], !0x0202u16),
+            (vec![vec![255]], !255u16),
+            (vec![vec![255], vec![0]], !255u16),
+            (vec![vec![0x42, 0xff]], !0xff42u16),
+            (vec![(0..=255).collect()], 49279),
+        ] {
+            let mut c = Checksum::new();
+            for p in data.iter() {
+                c.update(&p);
+            }
+            assert_eq!(c.finalize(), *expected, "{:?}", data);
+            // Incremental checksum of chunks should match the one-shot checksum
+            // of the entire flat array.
+            assert_eq!(c.finalize(), checksum(&data.into_iter().cloned().flatten().collect::<Vec<u8>>()), "{:?}", data);
+        }
     }
 
     fn save_exe<P: AsRef<path::Path>>(path: P, contents: &[u8]) -> io::Result<()> {
@@ -567,6 +655,20 @@ mod tests {
         }
     }
 
+    // read should permit a bad checksum
+    #[test]
+    fn test_read_exe_checksum() {
+        let mut sample = read_sample();
+
+        // Try reading the sample as is.
+        read_exe(&sample).unwrap();
+
+        // Invert e_csum and try reading again.
+        let e_csum = u16::from_le_bytes(sample[0x12..0x12+2].try_into().unwrap());
+        tests::store_u16le(&mut sample, 0x12, !e_csum);
+        read_exe(&sample).unwrap();
+    }
+
     #[test]
     fn test_read_exe_overlaps() {
         let sample = read_sample();
@@ -601,6 +703,27 @@ mod tests {
                 x => panic!("{:?}", x),
             }
         }
+    }
+
+    // write should write a correct checksum
+    #[test]
+    fn test_write_exe_checksum() {
+        let exe = Exe {
+            e_minalloc: 0,
+            e_maxalloc: 0,
+            e_ss: 0,
+            e_sp: 0,
+            e_ip: 0,
+            e_cs: 0,
+            e_ovno: 0,
+            relocs: vec![Pointer { segment: 12, offset: 34 }],
+            body: b"Hello world".to_vec(),
+        };
+        let mut buf = Vec::new();
+        exe.write(&mut buf).unwrap();
+        assert_eq!(checksum(&buf), 0u16);
+        tests::store_u16le(&mut buf, 0x12, 0u16);
+        assert_eq!(!u16::from_le_bytes(buf[0x12..0x12+2].try_into().unwrap()), !0u16);
     }
 
     #[test]
