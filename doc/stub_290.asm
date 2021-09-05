@@ -91,7 +91,7 @@ decompress:
 .loop:
 	mov cl, 4
 	; adjust ds:si so that si is as high as possible in the segment (without changing the address pointed to)
-	; because lengths can be as large as 0xffff and "rep movsb" may wrap around the segment
+	; because lengths may be as large as 0xfff0 and "rep movsb" may wrap around the segment
 	mov ax, si
 	not ax
 	shr ax, cl		; shift right by 4
@@ -105,7 +105,7 @@ decompress:
 	add si, ax
 	mov ds, dx
 	; adjust es:di so that di is as high as possible in the segment (without changing the address pointed to)
-	; because lengths can be as large as 0xffff and "rep stosb" and "rep movsb" may wrap around the segment
+	; because lengths may be as large as 0xfff0 and "rep stosb" and "rep movsb" may wrap around the segment
 	mov ax, di
 	not ax
 	shr ax, cl

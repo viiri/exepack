@@ -63,7 +63,7 @@
 ; .loop:
 ; 	mov cx, 0x0204
 ; 	; adjust ds:si and es:di so that si/di are as high as possible in their respective segments (without changing the addresses pointed to)
-; 	; because lengths can be as large as 0xffff and "rep stosb" and "rep movsb" may wrap around the segment
+; 	; because lengths may be as large as 0xfff0 and "rep stosb" and "rep movsb" may wrap around the segment
 ; 	; we run this operation twice (ch=0x02): the first time for ds:si, the second for es:di
 ; 	mov ax, si
 ; 	not ax
@@ -175,7 +175,7 @@ decompress:
 .loop:
 	mov cl, 4
 	; adjust ds:si so that si is as high as possible in the segment (without changing the address pointed to)
-	; because lengths can be as large as 0xffff and "rep movsb" may wrap around the segment
+	; because lengths may be as large as 0xfff0 and "rep movsb" may wrap around the segment
 	mov ax, si
 	not ax
 	shr ax, cl
@@ -186,7 +186,7 @@ decompress:
 	or si, 0xfff0		; si |= 0xfff0
 .si_full:
 	; adjust es:di so that di is as high as possible in the segment (without changing the address pointed to)
-	; because lengths can be as large as 0xffff and "rep stosb" and "rep movsb" may wrap around the segment
+	; because lengths may be as large as 0xfff0 and "rep stosb" and "rep movsb" may wrap around the segment
 	mov ax, di
 	not ax
 	shr ax, cl
