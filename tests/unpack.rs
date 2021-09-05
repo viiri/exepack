@@ -9,7 +9,7 @@ use exepack_crate::exe;
 use exepack_crate::exepack;
 use exepack_crate::pointer::Pointer;
 
-mod common;
+pub mod common;
 
 pub fn store_u16le(buf: &mut [u8], i: usize, v: u16) {
     buf[i..i + 2].clone_from_slice(&u16::to_le_bytes(v));
@@ -63,7 +63,7 @@ fn test_minalloc() {
     let packed = exe::Exe {
         e_minalloc: 0,
         ..exepack::pack(&exe::Exe {
-            body: vec![0; 1000],
+            body: common::compressible_text(1000),
             ..unpacked_sample()
         }).unwrap()
     };
