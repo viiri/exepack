@@ -59,7 +59,8 @@ copy_exepack_block:
 	mov dx, ds
 	mov ax, cx
 	add ax, 15
-	shr ax, 4
+	rcr ax, 1		; shift in the carry flag, in case (exepack_size + 15) overflowed
+	shr ax, 3
 	add ax, dx		; ax = ds + ceil(exepack_size/16)
 
 	mov dx, bx

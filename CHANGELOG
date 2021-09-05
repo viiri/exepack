@@ -1,5 +1,12 @@
 ## v1.3.0
 
+The decompression stub now works when the size of the EXEPACK block
+(exepack_size in the EXEPACK header) is 0xfff1 or greater. Such a large
+EXEPACK block is only possible if the packed relocation table contains
+between 32,594 and 32,601 entries. Previously, in this case, the
+computation (exepack_size + 15)/16 resulted in an integer overflow, and
+an incorrect computation of where to copy the EXEPACK block at runtime.
+
 
 ## v1.2.0 2021-09-04
 
