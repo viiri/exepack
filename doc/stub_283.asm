@@ -36,8 +36,8 @@
 ; https://archive.org/download/msdos_Mega_Man/msdos_Mega_Man.zip/mm.exe
 ; https://archive.org/download/TheAdventuresOfCaptainComic/AdventuresOfCaptainComicEpisode1The-PlanetOfDeathR2sw1988michaelA.Denioaction.zip/COMIC.EXE
 
-BITS 16
-ORG 18	; EXEPACK header is 18 bytes.
+cpu	8086
+org	18	; EXEPACK header is 18 bytes.
 
 ; Offsets of fields in the EXEPACK header.
 real_ip		equ	0

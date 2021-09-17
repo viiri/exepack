@@ -116,8 +116,8 @@
 ; 	nop
 ; 	nop
 
-BITS 16
-ORG 16	; EXEPACK header is 16 bytes.
+cpu	8086
+org	16	; EXEPACK header is 16 bytes.
 
 ; Offsets of fields in the EXEPACK header.
 real_ip		equ	0

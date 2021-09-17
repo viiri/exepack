@@ -30,8 +30,8 @@
 ; Sample:
 ; https://archive.org/download/MicroCom_374_Cash-Track/MicroCom_374_Cash-Track.zip/cashtrac.exe
 
-BITS 16
-ORG 16	; EXEPACK header is 16 bytes.
+cpu	8086
+org	16	; EXEPACK header is 16 bytes.
 
 ; Offsets of fields in the EXEPACK header.
 real_ip		equ	0

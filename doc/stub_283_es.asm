@@ -27,8 +27,8 @@
 ; Sample:
 ; https://archive.org/download/Total_DOS_Collection_Release_14/TDC_Release_14.zip/TDC%20release%2014%2F1992%2FBatman%20Returns%20%28Es%29%20%281992%29%28Konami%2C%20Inc.%29%20%5BAdventure%5D.zip BATMAN.EXE
 
-BITS 16
-ORG 18	; EXEPACK header is 18 bytes.
+cpu	8086
+org	18	; EXEPACK header is 18 bytes.
 
 ; Offsets of fields in the EXEPACK header.
 real_ip		equ	0
