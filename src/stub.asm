@@ -1,4 +1,4 @@
-; EXEPACK decompression blob.
+; EXEPACK decompression stub.
 ; This one aims to be compatible with Microsoft EXEPACK, while fixing
 ; the segment underflow (A20 gate) and relocation-at-offset-0xffff bugs,
 ; and fitting into what appears to be the most common size of 283 bytes.
