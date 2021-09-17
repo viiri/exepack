@@ -11,8 +11,8 @@
 ;   relocation_entries is at offset 283.
 ; * Ends with "Packed file is corrupt".
 
-BITS 16
-ORG 18	; EXEPACK header is 18 bytes.
+bits	16
+org	18	; EXEPACK header is 18 bytes.
 
 ; Offsets of fields in the EXEPACK header.
 ; http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK#EXEPACK_variables
@@ -208,7 +208,7 @@ execute_decompressed_program:
 	jmp far [cs:bx]		; jump to real_cs:real_ip.
 
 ; Pad to make the total size 283 bytes.
-TIMES	283-(relocation_entries-error)-($-$$)	nop
+times	283-(relocation_entries-error)-($-$$)	nop
 
 error:
 	mov ah, 0x40		; ah=0x40 => write to file handle
