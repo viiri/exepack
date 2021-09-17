@@ -26,11 +26,11 @@ dest_len	equ	12
 skip_len	equ	14	; unused; will have the value 1
 signature	equ	16	; unused
 
-; We use stupid and slow segment:offset addressing. Instead of shifting
-; segments in attempt to do maximal-length "rep lodsb" and "rep movsb",
-; we call dec_ds_si and dec_es_di in loops. dec_ds_si and dec_es_di
-; normalize the segment:offset format so that decrementing never
-; decreases ds or es by more than 1.
+; We do one-byte-at-a-time reads and copies. Instead of shifting
+; segments in an attempt to do maximal-length "rep lodsb" and
+; "rep movsb", which has the risk of underflowing the segment (A20 bug),
+; we call dec_lod_ds_si and dec_sto_es_di in loops. These functions
+; never decrease ds or es by more than 1.
 
 ; On load,
 ; * ds and es are set to the segment of the Program Segment Prefix
@@ -70,11 +70,11 @@ copy_exepack_block:
 	; block). Even already EXEPACK-compressed files are usually more
 	; compressible than that (because of redundancy in the EXEPACK
 	; block) so it's not worth complicating the logic for.
-	mov dx, ds
 	mov ax, cx
 	add ax, 15
 	rcr ax, 1		; shift in the carry flag, in case (exepack_size + 15) overflowed
 	shr ax, 3
+	mov dx, ds
 	add ax, dx		; ax = ds + ceil(exepack_size/16)
 
 	mov dx, bx
@@ -95,54 +95,55 @@ copy_exepack_block:
 	push decompress		; offset to jump to (i.e., label "decompress" in the copied EXEPACK block)
 	retf			; jump into the copied code
 
-; Decrement a normalized ds:si.
-dec_ds_si:
-	dec si
-	jns .si_ok	; here we assume si was not negative to begin with
+; Decrement ds:si, re-normalizing on underflow of si, and load al = [ds:si].
+dec_lod_ds_si:
+	sub si, 1
+	jnc .si_ok		; did si wrap to 0xffff?
 	mov si, ds
 	dec si
 	mov ds, si
-	mov si, 0xf
+	mov si, 0xf		; ds:ffff -> (ds-1):000f
 .si_ok:
+	mov al, [ds:si]
 	ret
 
-; Decrement a normalized es:di.
-dec_es_di:
-	dec di
-	jns .di_ok	; here we assume di was not negative to begin with
+; Decrement es:di, re-normalizing on underflow of di, and store [es:di] = al.
+dec_sto_es_di:
+	sub di, 1
+	jnc .di_ok		; did di wrap to 0xffff?
 	mov di, es
 	dec di
 	mov es, di
-	mov di, 0xf
+	mov di, 0xf		; es:ffff -> (es-1):000f
 .di_ok:
+	mov [es:di], al
 	ret
 
 decompress:
+	xor si, si		; ds:si points to the EXEPACK block, one byte past the end of the compressed data + padding
 	; Skip past 0xff padding.
-	xor si, si		; ds:si = real_ip, just past the end of the compressed data + padding
 .padding_loop:
-	call dec_ds_si
-	mov al, [ds:si]
+	call dec_lod_ds_si
 	cmp al, 0xff
-	je .padding_loop
-	; ds:si now points to the final byte of compressed data in the original buffer
+	jz .padding_loop
+	inc si
+	; ds:si points one byte past the final byte of the compressed data
 
 	xor di, di
-	call dec_es_di
-	; es:di now points to the final byte of the decompression buffer
+	; es:di points one byte past the final byte of the decompression buffer
 
 ; src  = ds:si
 ; dest = es:di
 .loop:
 	; dl = command byte
-	mov dl, [ds:si]
-	call dec_ds_si
+	call dec_lod_ds_si
+	mov dl, al
 
 	; cx = length
-	mov ch, [ds:si]
-	call dec_ds_si
-	mov cl, [ds:si]
-	call dec_ds_si
+	call dec_lod_ds_si
+	mov ch, al
+	call dec_lod_ds_si
+	mov cl, al
 
 	mov al, dl
 	and al, 0xfe
@@ -150,13 +151,11 @@ decompress:
 	cmp al, 0xb0		; 0xb0 fill command
 	jne .try_b2		; if (command & 0xfe) == 0xb0
 
-	mov al, [ds:si]		; read fill byte
-	call dec_ds_si
+	call dec_lod_ds_si	; al = fill byte
 
 	jcxz .loop_end
 .fill_loop:			; fill for length of cx
-	mov [es:di], al
-	call dec_es_di
+	call dec_sto_es_di
 	loop .fill_loop
 
 	jmp .loop_end
@@ -167,10 +166,8 @@ decompress:
 
 	jcxz .loop_end
 .copy_loop:			; copy for length of cx
-	mov al, [ds:si]
-	call dec_ds_si
-	mov [es:di], al
-	call dec_es_di
+	call dec_lod_ds_si	; al = byte to copy
+	call dec_sto_es_di	; store it
 	loop .copy_loop
 
 .loop_end:
@@ -194,8 +191,8 @@ apply_relocations:
 	; the offset is 0xffff.
 	and di, 0x000f		; keep the lower 4 bits of the offset
 	shr ax, 4		; shift the upper 12 bits into the segment
-	add ax, bx		; bx is mem_start from the beginning
 	add ax, dx		; dx is current relocation segment
+	add ax, bx		; bx is mem_start from the beginning
 	mov es, ax		; es:di points to relocation target word
 	add [es:di], bx		; *target += mem_start
 	loop .next_address
@@ -205,14 +202,13 @@ apply_relocations:
 	jne apply_relocations	; repeat until we wrap from 0xf000 back to 0x0000
 
 execute_decompressed_program:
-	mov ax, bx		; ax = mem_start
 	mov si, [real_ss]
-	add si, ax		; si = relocated real_ss
+	add si, bx		; si = relocated real_ss
 	mov di, [real_sp]	; di = real_sp
-	add [real_cs], ax	; real_cs = relocated real_cs
-	sub ax, 0x10
-	mov ds, ax		; ds = mem_start - 0x10 (start of PSP)
-	mov es, ax		; es = mem_start - 0x10 (start of PSP)
+	add [real_cs], bx	; real_cs = relocated real_cs
+	sub bx, 0x10
+	mov ds, bx		; ds = mem_start - 0x10 (start of PSP)
+	mov es, bx		; es = mem_start - 0x10 (start of PSP)
 	cli
 	mov ss, si		; ss = real_ss + mem_start
 	mov sp, di		; sp = real_sp
