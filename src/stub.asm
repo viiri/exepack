@@ -11,7 +11,7 @@
 ;   relocation_entries is at offset 283.
 ; * Ends with "Packed file is corrupt".
 
-bits	16
+cpu	8086
 org	18	; EXEPACK header is 18 bytes.
 
 ; Offsets of fields in the EXEPACK header.
@@ -73,7 +73,9 @@ copy_exepack_block:
 	mov ax, cx
 	add ax, 15
 	rcr ax, 1		; shift in the carry flag, in case (exepack_size + 15) overflowed
-	shr ax, 3
+	shr al, 1
+	shr al, 1
+	shr al, 1
 	mov dx, ds
 	add ax, dx		; ax = ds + ceil(exepack_size/16)
 
@@ -92,7 +94,8 @@ copy_exepack_block:
 
 	mov es, dx		; es = mem_start + dest_len (destination for decompression)
 	push ax			; segment to jump to (where we copied the EXEPACK block to)
-	push decompress		; offset to jump to (i.e., label "decompress" in the copied EXEPACK block)
+	mov ax, decompress
+	push ax			; offset to jump to (i.e., label "decompress" in the copied EXEPACK block)
 	retf			; jump into the copied code
 
 ; Decrement ds:si, re-normalizing on underflow of si, and load al = [ds:si].
@@ -190,7 +193,10 @@ apply_relocations:
 	; Normalize the es:di pointer to avoid a wraparound problem when
 	; the offset is 0xffff.
 	and di, 0x000f		; keep the lower 4 bits of the offset
-	shr ax, 4		; shift the upper 12 bits into the segment
+	shr ax, 1		; shift the upper 12 bits into the segment
+	shr ax, 1
+	shr ax, 1
+	shr ax, 1
 	add ax, dx		; dx is current relocation segment
 	add ax, bx		; bx is mem_start from the beginning
 	mov es, ax		; es:di points to relocation target word

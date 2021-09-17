@@ -7,6 +7,9 @@ between 32,594 and 32,601 entries. Previously, in this case, the
 computation (exepack_size + 15)/16 resulted in an integer overflow, and
 an incorrect computation of where to copy the EXEPACK block at runtime.
 
+The decompression stub now uses only 8086-compatible instructions,
+making it more compatible.
+
 
 ## v1.2.0 2021-09-04
 
