@@ -51,11 +51,25 @@ copy_exepack_block:
 
 	mov cx, [exepack_size]	; cx = size of the EXEPACK block (variables+code+relocations)
 
-	; We have to copy the EXEPACK block (ds:0000 to ds:exepack_size)
-	; out of the way, so that it is not overwritten neither during
-	; decompression nor during the copy itself. We set es to the
-	; maximum of mem_start + dest_len (the end of uncompressed data)
-	; and ds + ceil(exepack_size/16) (the end of the EXEPACK block).
+	; We must copy the EXEPACK block (ds:0000 to ds:exepack_size)
+	; past the decompression buffer, so that it will not overwrite
+	; itself while it is running the decompression algorithm. But we
+	; must also copy the EXEPACK block past its own current
+	; location, or else it will partially overwrite itself in the
+	; copy operation. (This can happen when the file was compressed
+	; by only a little, less than the size of the EXEPACK block.) We
+	; set es to the maximum of mem_start + dest_len (the end of
+	; uncompressed data) and ds + ceil(exepack_size/16) (the end of
+	; the EXEPACK block).
+	;
+	; We could technically avoid the copy in the case that the
+	; EXEPACK block is already fully past the decompression buffer;
+	; i.e. when ds >= mem_start + dest_len. But that case only
+	; arises when the input was highly incompressible--it decreased
+	; in size by less than 16 bytes (exclusive of the EXEPACK
+	; block). Even already EXEPACK-compressed files are usually more
+	; compressible than that (because of redundancy in the EXEPACK
+	; block) so it's not worth complicating the logic for.
 	mov dx, ds
 	mov ax, cx
 	add ax, 15
