@@ -26,6 +26,10 @@
 ; exe/eexpk.asm in https://bencastricum.nl/unp/unp4-src.zip:
 ; dw 0050h, 00B7h, 00F8h, EXEPACK, _V4_03                          , 0
 ;
+; This also the stub produced by LINK /EXEPACK 3.51 from Microsoft C
+; 4.0. Thanks to Dennis Luehring for providing an executable for
+; testing.
+;
 ; Sample:
 ; https://archive.org/download/MicroCom_109_Gambling_Games/MicroCom_109_Gambling_Games.zip/casino.exe
 

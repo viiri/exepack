@@ -25,6 +25,10 @@
 ; offset 0x103. From exe/eexpk.asm in https://bencastricum.nl/unp/unp4-src.zip:
 ; dw 0052h, 00C0h, 0103h, LINK, _V3_69, _, FwdS, EXEPACK           , 0
 ;
+; This also the stub produced by LINK /EXEPACK 5.10 from Microsoft C
+; 6.0a. Thanks to Dennis Luehring for providing an executable for
+; testing.
+;
 ; Sample:
 ; https://archive.org/download/MicroCom_20_Hog_Bear_Adventure/MicroCom_20_Hog_Bear_Adventure.zip/hogbear.exe
 ;

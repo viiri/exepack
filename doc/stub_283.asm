@@ -32,6 +32,11 @@
 ; offset 0xfe. From exe/eexpk.asm in https://bencastricum.nl/unp/unp4-src.zip:
 ; dw 0058h, 00BDh, 00FEh, EXEPACK, _V4_05, _or, _V4_06             , 0
 ;
+; This is the stub produced by EXEPACK 4.06 from MASM 5.00 and 5.10:
+; https://www.pcjs.org/software/pcx86/lang/microsoft/masm/5.00/
+; https://www.pcjs.org/software/pcx86/lang/microsoft/masm/5.10/
+; https://www.pcjs.org/software/pcx86/lang/microsoft/masm/5.10x/
+;
 ; Samples:
 ; https://archive.org/download/msdos_Mega_Man/msdos_Mega_Man.zip/mm.exe
 ; https://archive.org/download/TheAdventuresOfCaptainComic/AdventuresOfCaptainComicEpisode1The-PlanetOfDeathR2sw1988michaelA.Denioaction.zip/COMIC.EXE

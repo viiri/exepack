@@ -27,6 +27,16 @@
 ; dw 0050h, 00B5h, 00F6h, LINK, _V3_60, C, _V3_64, C, _V3_65
 ; dw                      _or, _V5_01_21, _, FwdS, EXEPACK         , 0
 ;
+; This also the stub produced by LINK /EXEPACK 3.61 from Microsoft C
+; 5.0, and LINK /EXEPACK 5.01.20 from Microsoft Macro Assembler 5.1.
+; Thanks to Dennis Luehring for providing executables for testing.
+;
+; This is the stub produced by LINK /EXEPACK 3.10, 3.60, and 3.64 from
+; MASM 5.00 and 5.10:
+; https://www.pcjs.org/software/pcx86/lang/microsoft/masm/5.00/
+; https://www.pcjs.org/software/pcx86/lang/microsoft/masm/5.10/
+; https://www.pcjs.org/software/pcx86/lang/microsoft/masm/5.10x/
+;
 ; Sample:
 ; https://archive.org/download/MicroCom_374_Cash-Track/MicroCom_374_Cash-Track.zip/cashtrac.exe
 
