@@ -3,3 +3,29 @@ from source you need NASM (https://nasm.us/) and djlink
 (http://www.delorie.com/djgpp/16bit/djlink/).
 
 $ make hello.exe
+
+The following files are compressed versions of hello.exe produced by
+versions of EXEPACK.EXE and LINK.EXE:
+	hello-masm4.00-exepack.exe
+	hello-masm4.00-link.exe
+	hello-masm5.00-exepack.exe
+	hello-masm5.00-link.exe
+	hello-masm5.10-exepack.exe
+	hello-masm5.10-link.exe
+To reproduce them you need DOSBox (https://www.dosbox.com/) and copies
+of EXEPACK.EXE and LINK.EXE. You can get the files here:
+masm4.00:
+	https://www.pcjs.org/software/pcx86/lang/microsoft/masm/4.00/
+	MASM-016014-400.img
+masm5.00:
+	https://www.pcjs.org/software/pcx86/lang/microsoft/masm/5.00/
+	MASM500-DISK1.img
+	MASM500-DISK2.img
+masm5.10:
+	https://www.pcjs.org/software/pcx86/lang/microsoft/masm/5.10/
+	MASM51-01511-DISK2.img
+For example, to recreate the masm4.00 files:
+
+$ mkdir masm4.00
+$ mcopy -n -i MASM-016014-400.img -s ::/ masm4.00/
+$ make hello-masm4.00-exepack.exe hello-masm4.00-link.exe

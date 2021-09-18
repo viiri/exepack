@@ -243,3 +243,28 @@ fn test_skip_len() {
         }
     }
 }
+
+#[test]
+fn test_compressed_by_others() {
+    let sample = {
+        let mut f = fs::File::open("tests/hello.exe").unwrap();
+        exe::Exe::read(&mut f, None).unwrap()
+    };
+
+    // These files are hello.exe, compressed with different versions of the
+    // Microsoft EXEPACK.EXE and LINK.EXE compressors.
+    for filename in &[
+	    "tests/hello-masm4.00-exepack.exe",
+	    "tests/hello-masm4.00-link.exe",
+	    "tests/hello-masm5.00-exepack.exe",
+	    "tests/hello-masm5.00-link.exe",
+	    "tests/hello-masm5.10-exepack.exe",
+	    "tests/hello-masm5.10-link.exe",
+    ] {
+        let other = {
+            let mut f = fs::File::open(filename).unwrap();
+            exe::Exe::read(&mut f, None).unwrap()
+        };
+        common::assert_exes_equivalent(&sample, &exepack::unpack(&other).unwrap());
+    }
+}
