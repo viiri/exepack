@@ -4,7 +4,7 @@ decompression stubs that have been seen in the wild.
 The following table summarizes their characteristics in their presumed
 chronological order.
 length: length of the assembled stub (not counting header and
-	relocations)
+	relocations).
 explicit skip_len: "no" means the EXEPACK header is 16 bytes with an
 	implicit skip_len=1; "yes" means the header is 18 bytes with an
 	explicit skip_len.
@@ -18,9 +18,8 @@ allows expansion: can it handle the case where len(compressed) >
 	len(uncompressed)?
 error string: the human-readable error message printed out when there is
 	a decompression failure.
-producer:
-	what compression utilities produce this stub. These labels come
-	from manual tests and from the byte patterns of UNP
+producer: what compression utilities produce this stub. These labels
+	come from manual tests and from the byte patterns of UNP
 	(https://bencastricum.nl/unp/); see the label EPIDData in the
 	file exe/eexpk.asm in the UNP source code.
 
