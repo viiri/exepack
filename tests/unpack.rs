@@ -53,7 +53,7 @@ fn test_minalloc() {
     };
     common::maybe_save_exe(format!("tests/minalloc_{}.packed.exe", packed.e_minalloc), &packed).unwrap();
     match exepack::unpack(&packed) {
-        Err(exepack::FormatError::MinAllocTooLarge { minalloc: 65557 }) => (),
+        Err(exepack::FormatError::MinAllocTooLarge { minalloc: 65541 }) => (),
         x => panic!("{:?}", x),
     }
 

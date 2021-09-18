@@ -606,12 +606,13 @@ mod tests {
     #[test]
     fn test_read_exe_len() {
         let sample = read_sample();
+        let sample_exe = read_exe(&sample).unwrap();
 
         // bogus encodings
         for &(e_cblp, e_cp) in &[
             (512u16, 1u16),
             (0xffffu16, 1u16),
-            (sample.len().try_into().unwrap(), 0u16),
+            (100u16, 0u16),
         ] {
             let mut sample = sample.clone();
             tests::store_u16le(&mut sample, 2, e_cblp);
@@ -645,13 +646,14 @@ mod tests {
         // shortens the EXE body
         {
             let mut sample = sample.clone();
-            let len = 96;
+            let hdr_size = sample.len().checked_sub(sample_exe.body.len()).unwrap();
+            let len = hdr_size + 32;
             let (e_cblp, e_cp) = encode_exe_len(len).unwrap();
             tests::store_u16le(&mut sample, 2, e_cblp);
             tests::store_u16le(&mut sample, 4, e_cp);
             maybe_save_exe(format!("tests/exe_len_{}.exe", len), &sample).unwrap();
             let exe = read_exe(&sample).unwrap();
-            assert_eq!(exe.body.len(), len - 64);
+            assert_eq!(exe.body.len(), 32);
         }
     }
 
@@ -672,6 +674,7 @@ mod tests {
     #[test]
     fn test_read_exe_overlaps() {
         let sample = read_sample();
+        let sample_exe = read_exe(&sample).unwrap();
 
         {
             let mut sample = sample.clone();
@@ -695,11 +698,12 @@ mod tests {
         }
         {
             let mut sample = sample.clone();
-            // e_lfarlc = 128, after the header end
-            tests::store_u16le(&mut sample, 24, 128);
+            let hdr_size = sample.len().checked_sub(sample_exe.body.len()).unwrap();
+            // e_lfarlc points to after the header end
+            tests::store_u16le(&mut sample, 24, (hdr_size + 32).try_into().unwrap());
             maybe_save_exe("tests/cparhdr_relocs_outside_header.exe", &sample).unwrap();
             match read_exe(&sample) {
-                Err(Error::Format(FormatError::HeaderTooShort { e_cparhdr: 4 })) => (),
+                Err(Error::Format(FormatError::HeaderTooShort { .. })) => (),
                 x => panic!("{:?}", x),
             }
         }

@@ -1,28 +1,5 @@
-hello.exe is used as a sample input file for some tests. You can
-recreate it from source using NASM:
+hello.exe is used as a sample input file for some tests. To recreate it
+from source you need NASM (https://nasm.us/) and djlink
+(http://www.delorie.com/djgpp/16bit/djlink/).
 
-$ nasm -O2 -fbin hello.asm
-
-This will create a binary file called hello. Run the following Python
-script to turn it into hello.exe. If you make changes, you will have to
-change the relocs list to point to where the "numbers" label ended up.
-
-$ python mkexe.py < hello > hello.exe
-
-import struct
-import sys
-
-def encode_exe_len(len):
-    return (len % 512, (len + 511) // 512)
-
-body = sys.stdin.read()
-relocs = [0x44, 0x46] # overwrite the "numbers" array
-
-e_cparhdr = 4
-e_cblp, e_cp = encode_exe_len(16*e_cparhdr + len(body))
-header = "MZ" + struct.pack("<HHHHHHHHHHHHH", e_cblp, e_cp, len(relocs), e_cparhdr, 0, 0xffff, 0, 128, 0, 0, 0, 28, 0)
-for reloc in relocs:
-    header += struct.pack("<L", reloc)
-header = header.ljust(e_cparhdr*16, "\x00")
-
-sys.stdout.write(header + body)
+$ make hello.exe
