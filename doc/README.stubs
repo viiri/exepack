@@ -43,3 +43,10 @@ the wild.
 		length	skip_len	ax		A20 bug		0xffff bug	expansion	string				producer
 ------------------------------------------------------------------------------------------------------------------------------------------------------
 src/stub.asm	283	yes		yes		no		no		yes		"Packed file is corrupt"	exepack
+
+The file exstub.rs extracts the stub from an EXEPACK-compressed file. To
+use it:
+
+$ mkdir -p src/bin
+$ cp doc/exstub.rs src/bin/
+$ cargo run --bin exstub test.exe > test.stub
