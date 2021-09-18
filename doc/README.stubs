@@ -18,30 +18,33 @@ allows expansion: can it handle the case where len(compressed) >
 	len(uncompressed)?
 error string: the human-readable error message printed out when there is
 	a decompression failure.
+8086-compatible: does the stub use only instructions available on 8086
+	(more compatible)?
 producer: what compression utilities produce this stub. These labels
 	come from manual tests and from the byte patterns of UNP
 	(https://bencastricum.nl/unp/); see the label EPIDData in the
 	file exe/eexpk.asm in the UNP source code.
 
-			explicit	restores			relocate	allows		error
-		length	skip_len	ax		A20 bug		0xffff bug	expansion	string				producer
-------------------------------------------------------------------------------------------------------------------------------------------------------
-stub_258.asm	258	no		no		yes		yes		no		"Packed file is corrupt"	EXEPACK 4.00 or LINK /EXEPACK 3.05
-stub_258_es.asm	258	no		no		yes		yes		no		"Fichero corrompido    "	?
-stub_279.asm	279	no		no		yes		no		no		"Packed file is corrupt"	EXEPACK 4.03 or LINK /EXEPACK 3.51
-stub_277.asm	277	no		no		yes		no		no		"Packed file is corrupt"	LINK /EXEPACK 3.10, 3.60, 3.61, 3.64, 3.65, 5.01.20, or 5.01.21
-stub_283.asm	283	yes		no		yes		no		no		"Packed file is corrupt"	EXEPACK 4.05 or 4.06
-stub_290.asm	290	no		yes		no		no		no		"Packed file is corrupt"	LINK /EXEPACK 3.69 or 5.10
+			explicit	restores			relocate	allows		8086-		error
+		length	skip_len	ax		A20 bug		0xffff bug	expansion	compatible	string				producer
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+stub_258.asm	258	no		no		yes		yes		no		yes		"Packed file is corrupt"	EXEPACK 4.00 or LINK /EXEPACK 3.05
+stub_258_es.asm	258	no		no		yes		yes		no		yes		"Fichero corrompido    "	?
+stub_279.asm	279	no		no		yes		no		no		yes		"Packed file is corrupt"	EXEPACK 4.03 or LINK /EXEPACK 3.51
+stub_277.asm	277	no		no		yes		no		no		yes		"Packed file is corrupt"	LINK /EXEPACK 3.10, 3.60, 3.61, 3.64, 3.65, 5.01.20, or 5.01.21
+stub_283.asm	283	yes		no		yes		no		no		yes		"Packed file is corrupt"	EXEPACK 4.05 or 4.06
+stub_290.asm	290	no		yes		no		no		no		yes		"Packed file is corrupt"	LINK /EXEPACK 3.69 or 5.10
 
 The custom decompression stub emitted by this program aims to fix the
 problems with all the existing stubs, while fitting into 283 bytes and
 using an explicit skip_len, which seems to be the most common format in
 the wild.
 
-			explicit	restores			relocate	allows		error
-		length	skip_len	ax		A20 bug		0xffff bug	expansion	string				producer
-------------------------------------------------------------------------------------------------------------------------------------------------------
-src/stub.asm	283	yes		yes		no		no		yes		"Packed file is corrupt"	exepack
+			explicit	restores			relocate	allows		8086-		error
+		length	skip_len	ax		A20 bug		0xffff bug	expansion	compatible	string				producer
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+stub_1.12.asm	283	yes		yes		no		no		yes		no		"Packed file is corrupt"	exepack v0.4.0–v1.2.0
+src/stub.asm	283	yes		yes		no		no		yes		yes		"Packed file is corrupt"	exepack
 
 The file exstub.rs extracts the stub from an EXEPACK-compressed file. To
 use it:
