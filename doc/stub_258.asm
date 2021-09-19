@@ -30,8 +30,11 @@
 ; dw 0050h, 00B2h, 00E3h, EXEPACK, _V4_00                          , 0
 ;
 ; This also the stub produced by the unversioned EXEPACK from Microsoft
-; C 3.0, and LINK /EXEPACK 3.05 from Microsoft Macro Assembler 4.0.
-; Thanks to Dennis Luehring for providing executables for testing.
+; C 3.0, LINK /EXEPACK 3.02 from Microsoft QuickBASIC Compiler 1.00,
+; LINK /EXEPACK 3.05 from Microsoft Macro Assembler 4.0, LINK /EXEPACK
+; 3.06 from Microsoft QuickBASIC v2.01, and LINK /EXEPACK 3.06 from
+; Microsoft QuickBasic 3.0. Thanks to Dennis Luehring for providing
+; executables for testing.
 ;
 ; This is the stub produced by EXEPACK 4.00 and LINK /EXEPACK 3.05 from
 ; MASM 4.00:

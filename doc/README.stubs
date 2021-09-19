@@ -28,12 +28,12 @@ producer: what compression utilities produce this stub. These labels
 			explicit	restores			relocate	allows		8086-		error
 		length	skip_len	ax		A20 bug		0xffff bug	expansion	compatible	string				producer
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------
-stub_258.asm	258	no		no		yes		yes		no		yes		"Packed file is corrupt"	EXEPACK 4.00 or LINK /EXEPACK 3.05
+stub_258.asm	258	no		no		yes		yes		no		yes		"Packed file is corrupt"	EXEPACK 4.00; or LINK /EXEPACK 3.02, 3.05, or 3.06
 stub_258_es.asm	258	no		no		yes		yes		no		yes		"Fichero corrompido    "	?
-stub_279.asm	279	no		no		yes		no		no		yes		"Packed file is corrupt"	EXEPACK 4.03 or LINK /EXEPACK 3.51
+stub_279.asm	279	no		no		yes		no		no		yes		"Packed file is corrupt"	EXEPACK 4.03, LINK /EXEPACK 3.51, or IBM Linker/2 1.0
 stub_277.asm	277	no		no		yes		no		no		yes		"Packed file is corrupt"	LINK /EXEPACK 3.10, 3.60, 3.61, 3.64, 3.65, 5.01.20, or 5.01.21
 stub_283.asm	283	yes		no		yes		no		no		yes		"Packed file is corrupt"	EXEPACK 4.05 or 4.06
-stub_290.asm	290	no		yes		no		no		no		yes		"Packed file is corrupt"	LINK /EXEPACK 3.69 or 5.10
+stub_290.asm	290	no		yes		no		no		no		yes		"Packed file is corrupt"	LINK /EXEPACK 3.69, 5.05, 5.10, 5.60, 5.60.220, or 5.60.339
 
 The custom decompression stub emitted by this program aims to fix the
 problems with all the existing stubs, while fitting into 283 bytes and
