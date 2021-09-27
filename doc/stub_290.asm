@@ -28,6 +28,9 @@
 ; This also the stub produced by:
 ; * LINK /EXEPACK 5.05 from Microsoft BASIC Professional Development System 7.0
 ; * LINK /EXEPACK 5.10 from Microsoft C 6.0a and Microsoft BASIC Professional Development System 7.1
+; * LINK /EXEPACK 5.13 from Microsoft Assembler 6.0/6.0b
+; * LINK /EXEPACK 5.15 from Microsoft Cobol 4.5
+; * LINK /EXEPACK 5.31.009 from Microsoft Assembler 6.11/6.11d and Microsoft Cobol 5.0
 ; * LINK /EXEPACK 5.60 from Microsoft Visual C++ 1.5
 ; * LINK /EXEPACK 5.60.220 from Microsoft Visual C++ 2.0
 ; * LINK /EXEPACK 5.60.339 from Microsoft Visual C++ 1.52c
