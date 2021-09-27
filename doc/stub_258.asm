@@ -31,10 +31,9 @@
 ;
 ; This also the stub produced by:
 ; * the unversioned EXEPACK from Microsoft C 3.0
-; * LINK /EXEPACK 3.02 from Microsoft QuickBASIC Compiler 1.00
+; * LINK /EXEPACK 3.02 from Microsoft QuickBASIC Compiler 1.00, 1.01, 1.02
 ; * LINK /EXEPACK 3.05 from Microsoft Macro Assembler 4.0
-; * LINK /EXEPACK 3.06 from Microsoft QuickBASIC v2.01
-; * LINK /EXEPACK 3.06 from Microsoft QuickBasic 3.0
+; * LINK /EXEPACK 3.06 from Microsoft QuickBASIC 2.00, 2.01, 3.00
 ; Thanks to Dennis Luehring for providing executables for testing.
 ;
 ; This is the stub produced by EXEPACK 4.00 and LINK /EXEPACK 3.05 from
