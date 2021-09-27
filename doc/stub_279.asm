@@ -26,8 +26,9 @@
 ; exe/eexpk.asm in https://bencastricum.nl/unp/unp4-src.zip:
 ; dw 0050h, 00B7h, 00F8h, EXEPACK, _V4_03                          , 0
 ;
-; This also the stub produced by LINK /EXEPACK 3.51 from Microsoft C 4.0
-; and IBM Linker/2 1.0 from IBM Personal Computer BASIC Compiler-2.
+; This also the stub produced by:
+; * LINK /EXEPACK 3.51 from Microsoft C 4.0
+; * IBM Linker/2 1.0 from IBM Personal Computer BASIC Compiler-2
 ; Thanks to Dennis Luehring for providing executables for testing.
 ;
 ; Sample:

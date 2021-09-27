@@ -25,13 +25,13 @@
 ; offset 0x103. From exe/eexpk.asm in https://bencastricum.nl/unp/unp4-src.zip:
 ; dw 0052h, 00C0h, 0103h, LINK, _V3_69, _, FwdS, EXEPACK           , 0
 ;
-; This also the stub produced by LINK /EXEPACK 5.05 from Microsoft BASIC
-; Professional Development System 7.0, LINK /EXEPACK 5.10 from Microsoft
-; C 6.0a and Microsoft BASIC Professional Development System 7.1, LINK
-; /EXEPACK 5.60 from Microsoft Visual C++ 1.5, LINK /EXEPACK 5.60.220
-; from Microsoft Visual C++ 2.0, and LINK /EXEPACK 5.60.339 from
-; Microsoft Visual C++ 1.52c. Thanks to Dennis Luehring for providing
-; executables for testing.
+; This also the stub produced by:
+; * LINK /EXEPACK 5.05 from Microsoft BASIC Professional Development System 7.0
+; * LINK /EXEPACK 5.10 from Microsoft C 6.0a and Microsoft BASIC Professional Development System 7.1
+; * LINK /EXEPACK 5.60 from Microsoft Visual C++ 1.5
+; * LINK /EXEPACK 5.60.220 from Microsoft Visual C++ 2.0
+; * LINK /EXEPACK 5.60.339 from Microsoft Visual C++ 1.52c
+; Thanks to Dennis Luehring for providing executables for testing.
 ;
 ; Sample:
 ; https://archive.org/download/MicroCom_20_Hog_Bear_Adventure/MicroCom_20_Hog_Bear_Adventure.zip/hogbear.exe
