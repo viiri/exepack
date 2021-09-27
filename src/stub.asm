@@ -78,9 +78,11 @@ copy_exepack_block:
 	shr al, 1
 	mov dx, ds
 	add ax, dx		; ax = ds + ceil(exepack_size/16)
+				; ignore possible overflow (possible only when ds >= 0xff00)
 
 	mov dx, bx
 	add dx, [dest_len]	; dx = mem_start + dest_len
+				; ignore possible overflow
 
 	cmp ax, dx
 	jae .ax_max
@@ -197,8 +199,9 @@ apply_relocations:
 	shr ax, 1
 	shr ax, 1
 	shr ax, 1
-	add ax, dx		; dx is current relocation segment
+	add ax, dx		; dx is current relocation segment (this addition cannot overflow)
 	add ax, bx		; bx is mem_start from the beginning
+				; ignore possible overflow
 	mov es, ax		; es:di points to relocation target word
 	add [es:di], bx		; *target += mem_start
 	loop .next_address
@@ -210,8 +213,10 @@ apply_relocations:
 execute_decompressed_program:
 	mov si, [real_ss]
 	add si, bx		; si = relocated real_ss
+				; ignore possible overflow
 	mov di, [real_sp]	; di = real_sp
 	add [real_cs], bx	; real_cs = relocated real_cs
+				; ignore possible overflow
 	sub bx, 0x10
 	mov ds, bx		; ds = mem_start - 0x10 (start of PSP)
 	mov es, bx		; es = mem_start - 0x10 (start of PSP)
