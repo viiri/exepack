@@ -298,7 +298,7 @@ impl Exe {
         // Here are examples of DOS implementations ignoring the checksum:
         // https://github.com/microsoft/MS-DOS/blob/80ab2fddfdf30f09f0a0a637654cbb3cd5c7baa6/v2.0/source/EXE2BIN.ASM#L79
         // https://sourceforge.net/p/dosbox/code-0/HEAD/tree/dosbox/tags/RELEASE_0_74_3/src/dos/dos_execute.cpp#l46
-        // https://sourceforge.net/p/freedos/svn/HEAD/tree/kernel/tags/ke2042/kernel/task.c#l555
+        // https://github.com/FDOS/kernel/blob/ke2043/kernel/task.c#L601
         read_u16le(input)?; // e_csum
         let e_ip = read_u16le(input)?;
         let e_cs = read_u16le(input)?;
