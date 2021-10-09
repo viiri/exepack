@@ -1,4 +1,4 @@
-## v1.3.0
+## v1.3.0 2021-10-09
 
 The decompression stub now works when the size of the EXEPACK block
 (exepack_size in the EXEPACK header) is 0xfff1 or greater. Such a large
