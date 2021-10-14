@@ -73,26 +73,16 @@ There are several versions of the EXEPACK format,
 with slight differences.
 This program heuristically tries to determine
 which format is in use.
-It is known to work with at least these versions
-(version numbers were determined by comparing
-known formats against the labeled signatures
-in Ben Castricum's UNP utility):
-.IP \(bu
-EXEPACK 4.00, 4.03, 4.05, 4.06
-.IP \(bu
-LINK /EXEPACK 3.60, 3.64, 3.65, 3.69, 5.01.21
-.P
-In compress mode, this program tries to produce files
+In compress mode, it tries to produce files
 that, in addition to being self-extracting,
-use the same file offsets as EXEPACK 4.05/4.06,
-which is the format documented at
-http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK#File_Format.
+use the same format and offsets as files
+compressed by EXEPACK 4.05/4.06.
 This is to retain compatibility with other external decompressors.
 In decompress mode,
 if the input resembles EXEPACK
 (i.e., contains the string "Packed file is corrupt")
-but the precise format isn't recognized,
-it will display the EXEPACK header and executable stub,
+but its precise format is not recognized,
+the program will display the EXEPACK header and executable stub,
 and ask you to email them to the author so
 that the format can be supported in the future.
 .SH SEE ALSO
