@@ -103,58 +103,39 @@ impl fmt::Display for PathError {
     }
 }
 
-/// Calls `exepack::pack` on the EXE file named by `path`.
-fn pack_file<P: AsRef<Path>>(path: P) -> Result<exe::Exe, Error> {
-    let f = File::open(&path)?;
-    let file_len = f.metadata()?.len();
-    let mut f = io::BufReader::new(f);
-    let exe = exe::Exe::read(&mut f, Some(file_len))?;
-    exepack::pack(&exe).map_err(From::from)
-}
-
-/// Calls `exepack::unpack` on the EXE file named by `path`.
-fn unpack_file<P: AsRef<Path>>(path: P) -> Result<exe::Exe, Error> {
-    let f = File::open(&path)?;
-    let file_len = f.metadata()?.len();
-    let mut f = io::BufReader::new(f);
-    let exe = exe::Exe::read(&mut f, Some(file_len))?;
-    exepack::unpack(&exe).map_err(From::from)
-}
-
-/// Writes an EXE to a file named by `path`.
-fn write_exe_file<P: AsRef<Path>>(path: P, exe: &exe::Exe) -> Result<u64, Error> {
-    let f = File::create(&path)?;
-    let mut f = io::BufWriter::new(f);
-    let n = exe.write(&mut f)?;
-    f.flush()?;
-    Ok(n)
-}
-
-/// Reads an EXE from `input_path`, compresses it, and writes the compressed EXE
-/// to `output_path`.
-fn compress_mode<P, Q>(input_path: P, output_path: Q) -> Result<(), PathError>
-where
-    P: AsRef<Path>,
-    Q: AsRef<Path>,
-{
-    let exe = pack_file(&input_path)
-        .map_err(|err| PathError::new(&input_path, err))?;
-    write_exe_file(&output_path, &exe)
-        .map_err(|err| PathError::new(&output_path, err))?;
-    Ok(())
-}
-
-/// Reads an EXE from `input_path`, decompresses it, and writes the decompressed
+/// Reads an EXE from `input_path`, runs `op` on it, and writes the transformed
 /// EXE to `output_path`.
-fn decompress_mode<P, Q>(input_path: P, output_path: Q) -> Result<(), PathError>
+fn process<P, Q>(
+    input_path: P, output_path: Q,
+    op: fn(exe: &exe::Exe) -> Result<exe::Exe, exepack::FormatError>
+) -> Result<(), PathError>
 where
     P: AsRef<Path>,
     Q: AsRef<Path>,
 {
-    let exe = unpack_file(&input_path)
+    // Read and run op on the input. Any error here gets annotated with
+    // input_path.
+    let output_exe = (|| -> Result<_, Error> {
+        let input = File::open(&input_path)?;
+        let file_len = input.metadata()?.len();
+        let mut input = io::BufReader::new(input);
+        let input_exe = exe::Exe::read(&mut input, Some(file_len))?;
+        let output_exe = op(&input_exe)?;
+        Ok(output_exe)
+    })()
         .map_err(|err| PathError::new(&input_path, err))?;
-    write_exe_file(&output_path, &exe)
+
+    // Save output_exe to a file. Any error here gets annotated with
+    // output_path.
+    (|| -> Result<_, Error> {
+        let output  = File::create(&output_path)?;
+        let mut output = io::BufWriter::new(output);
+        output_exe.write(&mut output)?;
+        output.flush()?;
+        Ok(())
+    })()
         .map_err(|err| PathError::new(&output_path, err))?;
+
     Ok(())
 }
 
@@ -278,11 +259,13 @@ fn main() {
     let input_path = &matches.free[0];
     let output_path = &matches.free[1];
 
-    if let Err(err) = if matches.opt_present("d") {
-        decompress_mode(&input_path, &output_path)
+    let op = if matches.opt_present("d") {
+        exepack::unpack
     } else {
-        compress_mode(&input_path, &output_path)
-    } {
+        exepack::pack
+    };
+
+    if let Err(err) = process(&input_path, &output_path, op) {
         match err.err {
             Error::Exepack(exepack::FormatError::UnknownStub { ref exepack_header, ref stub }) => {
                 // UnknownStub gets special treatment. We search for "Packed
