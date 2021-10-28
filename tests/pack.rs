@@ -1,4 +1,3 @@
-use std::fs;
 use std::iter;
 
 extern crate exepack as exepack_crate;
@@ -311,31 +310,4 @@ fn test_lengths() {
         common::maybe_save_exe("tests/maxlen_maxrelocs+1_incompressible.exe", &exe).unwrap();
         want_error!(exepack::pack(&exe));
     }
-}
-
-fn pack_roundtrip_count(count: usize, max: usize, exe: exe::Exe) -> exe::Exe {
-    if count + 1 > max {
-        return exe;
-    }
-    let packed = pack_roundtrip_count(count + 1, max, exepack::pack(&exe).unwrap());
-    common::maybe_save_exe(format!("tests/hello_roundtrip_{}.packed.exe", count + 1), &packed).unwrap();
-    let unpacked = exepack::unpack(&packed).unwrap();
-    common::maybe_save_exe(format!("tests/hello_roundtrip_{}.unpacked.exe", count), &unpacked).unwrap();
-    if std::panic::catch_unwind(|| {
-        common::assert_exes_equivalent(&exe, &unpacked);
-    }).is_err() {
-        panic!("unequal at depth {}", count);
-    }
-    unpacked
-}
-
-// test that compressing and re-compressing, then decompressing and
-// re-decompressing, gives equivalent results all the way down and up the chain.
-#[test]
-fn test_roundtrip() {
-    let exe = {
-        let mut f = fs::File::open("tests/hello.exe").unwrap();
-        exe::Exe::read(&mut f, None).unwrap()
-    };
-    pack_roundtrip_count(0, 9, exe);
 }
