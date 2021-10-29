@@ -523,7 +523,7 @@ mod tests {
     }
 
     fn read_exe_with_hint(buf: &[u8], file_len_hint: Option<u64>) -> Result<Exe, Error> {
-        Exe::read(&mut io::Cursor::new(buf), file_len_hint)
+        Exe::read(&mut buf.clone(), file_len_hint)
     }
 
     // a version of exepack::read_exe that works from a byte buffer rather than an
