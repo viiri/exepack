@@ -62,16 +62,18 @@ fn exepack_decompress<P: AsRef<path::Path>>(input_path: P) -> Result<tempfile::N
     Ok(output_file)
 }
 
-/// Reads an exe::Exe.
-fn read_exe<R: io::Read>(r: &mut R) -> Result<exe::Exe, Box<dyn Error>> {
+/// Reads an exe::Exe and its trailing data.
+fn read_exe_and_trailing<R: io::Read>(r: &mut R) -> Result<(exe::Exe, Vec<u8>), Box<dyn Error>> {
     let mut r = io::BufReader::new(r);
     let exe = exe::Exe::read(&mut r, None)?;
-    Ok(exe)
+    let mut trailing = Vec::new();
+    io::copy(&mut r, &mut trailing)?;
+    Ok((exe, trailing))
 }
 
-/// Reads an exe::Exe from a file.
-fn read_exe_from_file<P: AsRef<path::Path>>(path: P) -> Result<exe::Exe, Box<dyn Error>> {
-    read_exe(&mut fs::File::open(&path)?)
+/// Reads an exe::Exe and its trailing data from a file.
+fn read_exe_and_trailing_from_file<P: AsRef<path::Path>>(path: P) -> Result<(exe::Exe, Vec<u8>), Box<dyn Error>> {
+    read_exe_and_trailing(&mut fs::File::open(&path)?)
 }
 
 /// Copies the file `from` to the file `to` if the if the environment variable
@@ -87,21 +89,26 @@ where
     Ok(())
 }
 
-fn roundtrip_count<P: AsRef<path::Path>>(count: usize, max: usize, orig_path: P) -> Option<tempfile::NamedTempFile> {
+fn roundtrip_count<P: AsRef<path::Path>>(count: usize, max: usize, basename: &str, orig_path: P) -> Option<tempfile::NamedTempFile> {
     if count + 1 > max {
         return None;
     }
 
-    let orig_exe = read_exe_from_file(&orig_path).unwrap();
+    let (orig_exe, _orig_trailing) = read_exe_and_trailing_from_file(&orig_path).unwrap();
 
-    let compressed_file = exepack_compress(&orig_path).unwrap();
-    maybe_copy_file(compressed_file.path(), format!("tests/hello_roundtrip_{}.compressed.exe", count + 1)).unwrap();
+    let mut compressed_file = exepack_compress(&orig_path).unwrap();
+    let (_compressed_exe, compressed_trailing) = read_exe_and_trailing(&mut compressed_file).unwrap();
+    maybe_copy_file(compressed_file.path(), format!("tests/{}_roundtrip_{}.compressed.exe", basename, count + 1)).unwrap();
+    // Check that trailing data in compression input is discarded.
+    assert_eq!(compressed_trailing.as_slice(), &[]);
 
-    let roundtripped_file = roundtrip_count(count + 1, max, compressed_file.path());
+    let roundtripped_file = roundtrip_count(count + 1, max, basename, compressed_file.path());
 
     let mut decompressed_file = exepack_decompress(roundtripped_file.unwrap_or(compressed_file).path()).unwrap();
-    let decompressed_exe = read_exe(&mut decompressed_file).unwrap();
-    maybe_copy_file(decompressed_file.path(), format!("tests/hello_roundtrip_{}.decompressed.exe", count)).unwrap();
+    let (decompressed_exe, decompressed_trailing) = read_exe_and_trailing(&mut decompressed_file).unwrap();
+    maybe_copy_file(decompressed_file.path(), format!("tests/{}_roundtrip_{}.decompressed.exe", basename, count)).unwrap();
+    // Check that trailing data in decompression input is discarded.
+    assert_eq!(decompressed_trailing.as_slice(), &[]);
 
     if std::panic::catch_unwind(|| {
         common::assert_exes_equivalent(&orig_exe, &decompressed_exe);
@@ -116,5 +123,6 @@ fn roundtrip_count<P: AsRef<path::Path>>(count: usize, max: usize, orig_path: P)
 /// re-decompressing, gives equivalent results all the way down and up the chain.
 #[test]
 fn test_roundtrip() {
-    roundtrip_count(0, 9, "tests/hello.exe");
+    roundtrip_count(0, 9, "hello", "tests/hello.exe");
+    roundtrip_count(0, 9, "hello+trailing", "tests/hello+trailing.exe");
 }

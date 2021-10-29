@@ -3,13 +3,16 @@ NASM ?= nasm
 # http://www.delorie.com/djgpp/16bit/djlink/
 DJLINK ?= djlink
 
-all: hello.exe
+all: hello.exe hello+trailing.exe
 
 %.exe: %.obj
 	$(DJLINK) -o "$@" "$<"
 
 %.obj: %.asm
 	$(NASM) -O2 -f obj -o "$@" "$<"
+
+%+trailing.exe: %.exe
+	(cat "$<"; echo "This is some trailing data.") > "$@"
 
 # See README for instructions on reproducing these files.
 hello-%-link.exe: hello.obj
