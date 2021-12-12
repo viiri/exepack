@@ -56,6 +56,5 @@ msg_len	equ	$ - msg
 ; low-entropy padding to make the program compressible by Microsoft EXEPACK.EXE
 times	256	db	0
 
-section	_	stack
-sectalign	16
+section	_	stack align=16
 	resb	128
