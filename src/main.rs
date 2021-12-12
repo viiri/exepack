@@ -107,7 +107,7 @@ impl fmt::Display for PathError {
 /// EXE to `output_path`.
 fn process<P, Q>(
     input_path: P, output_path: Q,
-    op: fn(exe: &exe::Exe) -> Result<exe::Exe, exepack::FormatError>
+    op: fn(exe: &exe::Exe) -> Result<exe::Exe, exepack::FormatError>,
 ) -> Result<(), PathError>
 where
     P: AsRef<Path>,
@@ -183,7 +183,7 @@ fn escape(buf: &[u8]) -> String {
 fn write_escaped_stub_for_submission<W: Write + ?Sized>(
     w: &mut W,
     exepack_header_buffer: &[u8],
-    stub: &[u8]
+    stub: &[u8],
 ) -> io::Result<()> {
     let mut buf = Vec::new();
     buf.extend_from_slice(exepack_header_buffer);
@@ -202,7 +202,7 @@ fn write_escaped_stub_for_submission<W: Write + ?Sized>(
 fn display_unknown_stub<W: Write + ?Sized>(
     w: &mut W,
     exepack_header_buffer: &[u8],
-    stub: &[u8]
+    stub: &[u8],
 ) -> io::Result<()> {
     if stub_resembles_exepack(stub) {
         write!(w, "\
