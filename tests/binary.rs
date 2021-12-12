@@ -48,17 +48,16 @@ where
     }
 }
 
-/// Runs the exepack binary to compress a named file to a temporary file.
-fn exepack_compress<P: AsRef<path::Path>>(input_path: P) -> Result<tempfile::NamedTempFile, Box<dyn Error>> {
+/// Runs the exepack binary with the given options and input file, and a
+/// temporary output file.
+fn exepack_run_tempfile<I, S, P>(options: I, input_path: P) -> Result<tempfile::NamedTempFile, Box<dyn Error>>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+    P: AsRef<path::Path>,
+{
     let output_file = tempfile::NamedTempFile::new()?;
-    exepack_run(&([] as [&str; 0]), input_path, output_file.path())?;
-    Ok(output_file)
-}
-
-/// Runs the exepack binary to decompress a named file to a temporary file.
-fn exepack_decompress<P: AsRef<path::Path>>(input_path: P) -> Result<tempfile::NamedTempFile, Box<dyn Error>> {
-    let output_file = tempfile::NamedTempFile::new()?;
-    exepack_run(&["-d"], input_path, output_file.path())?;
+    exepack_run(options, input_path, output_file.path())?;
     Ok(output_file)
 }
 
@@ -96,7 +95,7 @@ fn roundtrip_count<P: AsRef<path::Path>>(count: usize, max: usize, basename: &st
 
     let (orig_exe, _orig_trailing) = read_exe_and_trailing_from_file(&orig_path).unwrap();
 
-    let mut compressed_file = exepack_compress(&orig_path).unwrap();
+    let mut compressed_file = exepack_run_tempfile(&[] as &[&str; 0], &orig_path).unwrap();
     let (_compressed_exe, compressed_trailing) = read_exe_and_trailing(&mut compressed_file).unwrap();
     maybe_copy_file(compressed_file.path(), format!("tests/{}_roundtrip_{}.compressed.exe", basename, count + 1)).unwrap();
     // Check that trailing data in compression input is discarded.
@@ -104,7 +103,7 @@ fn roundtrip_count<P: AsRef<path::Path>>(count: usize, max: usize, basename: &st
 
     let roundtripped_file = roundtrip_count(count + 1, max, basename, compressed_file.path());
 
-    let mut decompressed_file = exepack_decompress(roundtripped_file.unwrap_or(compressed_file).path()).unwrap();
+    let mut decompressed_file = exepack_run_tempfile(&["-d"], roundtripped_file.unwrap_or(compressed_file).path()).unwrap();
     let (decompressed_exe, decompressed_trailing) = read_exe_and_trailing(&mut decompressed_file).unwrap();
     maybe_copy_file(decompressed_file.path(), format!("tests/{}_roundtrip_{}.decompressed.exe", basename, count)).unwrap();
     // Check that trailing data in decompression input is discarded.
