@@ -4,7 +4,7 @@
 use std::env;
 use std::error::Error;
 use std::fs;
-use std::io;
+use std::io::{self, Read};
 use std::path;
 use std::process;
 
@@ -86,6 +86,22 @@ where
         fs::copy(from, to)?;
     }
     Ok(())
+}
+
+/// Tests that the -d and --decompress options are equivalent.
+#[test]
+fn test_decompress_options() {
+    let compressed_file = exepack_run_tempfile(&[] as &[&str; 0], "tests/hello.exe").unwrap();
+
+    let mut d_file = exepack_run_tempfile(&["-d"], compressed_file.path()).unwrap();
+    let mut d_buf = Vec::new();
+    d_file.read_to_end(&mut d_buf).unwrap();
+
+    let mut decompress_file = exepack_run_tempfile(&["--decompress"], compressed_file.path()).unwrap();
+    let mut decompress_buf = Vec::new();
+    decompress_file.read_to_end(&mut decompress_buf).unwrap();
+
+    assert_eq!(d_buf, decompress_buf);
 }
 
 fn roundtrip_count<P: AsRef<path::Path>>(count: usize, max: usize, basename: &str, orig_path: P) -> Option<tempfile::NamedTempFile> {
