@@ -25,7 +25,7 @@
 use std::env;
 use std::fmt::{self, Write as _};
 use std::fs::File;
-use std::io::{self, Write};
+use std::io::{self, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::process;
 use std::str;
@@ -117,9 +117,15 @@ where
     // input_path.
     let output_exe = (|| -> Result<_, Error> {
         let input = File::open(&input_path)?;
-        let file_len = input.metadata()?.len();
         let mut input = io::BufReader::new(input);
-        let input_exe = exe::Exe::read(&mut input, Some(file_len))?;
+        let input_exe = exe::Exe::read(&mut input)?;
+
+        let pos = input.seek(io::SeekFrom::Current(0))?;
+        let len = input.seek(io::SeekFrom::End(0))?;
+        if pos < len {
+            eprintln!("warning: EXE file size is {}; ignoring {} trailing bytes", len, len - pos);
+        }
+
         let output_exe = op(&input_exe)?;
         Ok(output_exe)
     })()

@@ -256,12 +256,9 @@ pub struct Exe {
 }
 
 impl Exe {
-    /// Reads an EXE file into an `Exe` structure.
-    ///
-    /// `file_len_hint` is an optional externally provided hint of
-    /// the input file's total length, which we use to emit a warning when it
-    /// exceeds the length stated in the EXE header.
-    pub fn read<R: Read + ?Sized>(input: &mut R, file_len_hint: Option<u64>) -> Result<Self, Error> {
+    /// Reads an EXE file into an `Exe` structure. Leaves the input positioned
+    /// immediately after the end of the EXE file.
+    pub fn read<R: Read + ?Sized>(input: &mut R) -> Result<Self, Error> {
         // Read the fixed fields of the header.
         {
             let e_magic = read_u16le(input)?;
@@ -336,18 +333,8 @@ impl Exe {
             let mut body = vec![0; body_len.try_into().unwrap()];
             input.read_exact(&mut body)
                 .map_err(|err| annotate_io_error(err, "reading EXE body"))?;
-            pos += body_len;
             body
         };
-
-        if let Some(file_len_hint) = file_len_hint {
-            // The EXE file length is allowed to be smaller than the length of the
-            // file containing it. Emit a warning that we are ignoring trailing
-            // garbage.
-            if pos < file_len_hint {
-                eprintln!("warning: EXE file size is {}; ignoring {} trailing bytes", exe_len, file_len_hint - pos);
-            }
-        }
 
         Ok(Self {
             e_minalloc,
@@ -522,14 +509,10 @@ mod tests {
         contents
     }
 
-    fn read_exe_with_hint(buf: &[u8], file_len_hint: Option<u64>) -> Result<Exe, Error> {
-        Exe::read(&mut buf.clone(), file_len_hint)
-    }
-
-    // a version of exepack::read_exe that works from a byte buffer rather than an
-    // io::Read, with no size hint
+    // a version of Exe::read that works from a byte buffer rather than an
+    // io::Read
     fn read_exe(buf: &[u8]) -> Result<Exe, Error> {
-        read_exe_with_hint(buf, None)
+        Exe::read(&mut buf.clone())
     }
 
     #[test]
@@ -585,19 +568,13 @@ mod tests {
             48, // EOF during header padding
             96, // EOF during body
         ] {
-            for &file_len_hint in &[ // file_len_hint shouldn't matter
-                Some(u64::try_from(sample.len()).unwrap()),
-                Some(u64::try_from(len).unwrap()),
-                None,
-            ] {
-                read_exe_with_hint(&sample, file_len_hint).unwrap(); // no truncation ⇒ ok
+            read_exe(&sample).unwrap(); // make sure it actually loads when there's no truncation
 
-                let sample = &sample[..len];
-                maybe_save_exe(format!("tests/truncate_{}.exe", len), sample).unwrap();
-                match read_exe_with_hint(sample, file_len_hint) {
-                    Err(Error::Io(ref err)) if err.kind() == io::ErrorKind::UnexpectedEof => (),
-                    x => panic!("{} {:?}", len, x),
-                }
+            let sample = &sample[..len];
+            maybe_save_exe(format!("tests/truncate_{}.exe", len), sample).unwrap();
+            match read_exe(sample) {
+                Err(Error::Io(ref err)) if err.kind() == io::ErrorKind::UnexpectedEof => (),
+                x => panic!("{} {:?}", len, x),
             }
         }
     }

@@ -65,7 +65,7 @@ fn exepack_decompress<P: AsRef<path::Path>>(input_path: P) -> Result<tempfile::N
 /// Reads an exe::Exe and its trailing data.
 fn read_exe_and_trailing<R: io::Read>(r: &mut R) -> Result<(exe::Exe, Vec<u8>), Box<dyn Error>> {
     let mut r = io::BufReader::new(r);
-    let exe = exe::Exe::read(&mut r, None)?;
+    let exe = exe::Exe::read(&mut r)?;
     let mut trailing = Vec::new();
     io::copy(&mut r, &mut trailing)?;
     Ok((exe, trailing))

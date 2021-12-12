@@ -21,12 +21,12 @@ pub fn fetch_u16le(buf: &[u8], i: usize) -> u16 {
 
 pub fn unpacked_sample() -> exe::Exe {
     let mut f = fs::File::open("tests/hello.exe").unwrap();
-    exe::Exe::read(&mut f, None).unwrap()
+    exe::Exe::read(&mut f).unwrap()
 }
 
 pub fn packed_sample() -> exe::Exe {
     let mut f = fs::File::open("tests/hello.exe").unwrap();
-    let exe = exe::Exe::read(&mut f, None).unwrap();
+    let exe = exe::Exe::read(&mut f).unwrap();
     exepack::pack(&exe).unwrap()
 }
 
@@ -248,7 +248,7 @@ fn test_skip_len() {
 fn test_compressed_by_others() {
     let sample = {
         let mut f = fs::File::open("tests/hello.exe").unwrap();
-        exe::Exe::read(&mut f, None).unwrap()
+        exe::Exe::read(&mut f).unwrap()
     };
 
     // These files are hello.exe, compressed with different versions of the
@@ -263,7 +263,7 @@ fn test_compressed_by_others() {
     ] {
         let other = {
             let mut f = fs::File::open(filename).unwrap();
-            exe::Exe::read(&mut f, None).unwrap()
+            exe::Exe::read(&mut f).unwrap()
         };
         common::assert_exes_equivalent(&sample, &exepack::unpack(&other).unwrap());
     }
