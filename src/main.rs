@@ -123,7 +123,8 @@ where
         let pos = input.seek(io::SeekFrom::Current(0))?;
         let len = input.seek(io::SeekFrom::End(0))?;
         if pos < len {
-            eprintln!("warning: EXE file size is {}; ignoring {} trailing bytes", len, len - pos);
+            eprintln!("{}: warning: EXE file size is {}; ignoring {} trailing bytes",
+                input_path.as_ref().display(), len, len - pos);
         }
 
         let output_exe = op(&input_exe)?;
