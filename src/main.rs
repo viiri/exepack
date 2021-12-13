@@ -273,16 +273,16 @@ fn main() {
     };
 
     if let Err(err) = process(&input_path, &output_path, op) {
+        eprintln!("{}", err);
         match err.err {
             Error::Exepack(exepack::FormatError::UnknownStub { ref exepack_header, ref stub }) => {
                 // UnknownStub gets special treatment. We search for "Packed
                 // file is corrupt" and display the stub if it is found, or warn
                 // that the input may not be EXEPACK if it is not.
-                eprintln!("{}", err);
                 eprintln!();
                 display_unknown_stub(&mut io::stderr(), &exepack_header, &stub).unwrap();
             }
-            _ => eprintln!("{}", err),
+            _ => (),
         }
         process::exit(1);
     }
