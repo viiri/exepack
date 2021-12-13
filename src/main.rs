@@ -41,7 +41,7 @@ enum Error {
     Io(io::Error),
     /// An EXE file format error.
     Exe(exe::FormatError),
-    /// An EXEPATK format error.
+    /// An EXEPACK format error.
     Exepack(exepack::FormatError),
 }
 
