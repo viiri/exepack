@@ -124,7 +124,7 @@ where
         let len = input.seek(io::SeekFrom::End(0))?;
         if pos < len {
             eprintln!("{}: warning: EXE file size is {}; ignoring {} trailing bytes",
-                input_path.as_ref().display(), len, len - pos);
+                input_path.as_ref().display(), pos, len - pos);
         }
 
         let output_exe = op(&input_exe)?;
