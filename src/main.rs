@@ -145,7 +145,7 @@ where
     Ok(())
 }
 
-/// Print a usage message to `w`.
+/// Prints a usage message to `w`.
 fn print_usage<W: Write + ?Sized>(w: &mut W, opts: getopts::Options) -> io::Result<()> {
     let brief = format!("\
 Usage: {} [OPTION]... INPUT.EXE OUTPUT.EXE\n\
