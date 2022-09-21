@@ -1,4 +1,10 @@
-## v1.4.0
+## v1.4.0 2021-09-21
+
+The program can now deal with command-line arguments that are not
+representable as UTF-8. Formerly, this would result in a runtime panic.
+
+Removed the feature that detected an unknown decompression stub and
+invited the user to submit it.
 
 
 ## v1.3.0 2021-10-09
