@@ -22,16 +22,17 @@
 //!
 //! * <http://www.shikadi.net/moddingwiki/Microsoft_EXEPACK>.
 
-use std::env;
+extern crate exepack as exepack_crate;
+use exepack_crate::exe;
+use exepack_crate::exepack;
+
+extern crate lexopt;
+
 use std::fmt;
 use std::fs::File;
 use std::io::{self, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::process;
-
-extern crate exepack as exepack_crate;
-use exepack_crate::exe;
-use exepack_crate::exepack;
 
 /// An error that may occur while manipulating an EXE file.
 #[derive(Debug)]
@@ -146,52 +147,74 @@ where
 }
 
 /// Prints a usage message to `w`.
-fn print_usage<W: Write + ?Sized>(w: &mut W, opts: getopts::Options) -> io::Result<()> {
-    let brief = format!("\
-Usage: {} [OPTION]... INPUT.EXE OUTPUT.EXE\n\
-Compress or decompress a DOS EXE executable with EXEPACK.",
-        env::args().next().unwrap()
-    );
-    write!(w, "{}", opts.usage(&brief))
+fn print_usage<W: Write + ?Sized>(w: &mut W, bin_name: &str) -> io::Result<()> {
+    write!(w, "\
+Usage: {} [OPTION]... INPUT.EXE OUTPUT.EXE
+Compress or decompress a DOS EXE executable with EXEPACK.
+
+Options:
+        --debug         does nothing (formerly showed debugging output)
+    -d, --decompress    decompress
+    -h, --help          show this help
+", bin_name)
+}
+
+struct Options {
+    input_path: PathBuf,
+    output_path: PathBuf,
+    decompress: bool, // -d, --decompress
+}
+
+fn parse_options() -> Result<Options, lexopt::Error> {
+    use lexopt::prelude::*;
+
+    let mut input_path: Option<PathBuf> = None;
+    let mut output_path: Option<PathBuf> = None;
+    let mut decompress = false;
+    let mut parser = lexopt::Parser::from_env();
+    while let Some(arg) = parser.next()? {
+        match arg {
+            Value(val) if input_path.is_none() => input_path = Some(val.into()),
+            Value(val) if output_path.is_none() => output_path = Some(val.into()),
+            Long("debug") => (), // Does nothing; removed --debug functionality after version 0.6.0.
+            Short('d') | Long("decompress") => decompress = true,
+            Short('h') | Long("help") => {
+                print_usage(&mut io::stdout(), parser.bin_name().unwrap_or("exepack")).unwrap();
+                std::process::exit(0);
+            }
+            _ => Err(arg.unexpected())?,
+        }
+    }
+
+    if input_path.is_none() || output_path.is_none() {
+        return Err("need INPUT.EXE and OUTPUT.EXE arguments")?;
+    }
+    let input_path = input_path.unwrap();
+    let output_path = output_path.unwrap();
+
+    Ok(Options {
+        input_path,
+        output_path,
+        decompress,
+    })
 }
 
 fn main() {
-    let mut opts = getopts::Options::new();
-    opts.optflag("", "debug", "does nothing (formerly showed debugging output)");
-    opts.optflag("d", "decompress", "decompress");
-    opts.optflag("h", "help", "show this help");
-    let matches = match opts.parse(env::args().skip(1)) {
-        Ok(matches) => matches,
+    let options = match parse_options() {
+        Ok(options) => options,
         Err(err) => {
             eprintln!("{}", err);
             process::exit(1);
         }
     };
 
-    if matches.opt_present("h") {
-        print_usage(&mut io::stdout(), opts).unwrap();
-        return;
-    }
-
-    if matches.opt_present("debug") {
-        // Does nothing; removed --debug functionality after version 0.6.0.
-    }
-
-    if matches.free.len() != 2 {
-        print_usage(&mut io::stderr(), opts).unwrap();
-        eprintln!("\nNeed INPUT.EXE and OUTPUT.EXE arguments");
-        process::exit(1);
-    }
-    let input_path = &matches.free[0];
-    let output_path = &matches.free[1];
-
-    let op = if matches.opt_present("d") {
+    let op = if options.decompress {
         exepack::unpack
     } else {
         exepack::pack
     };
 
-    if let Err(err) = process(&input_path, &output_path, op) {
+    if let Err(err) = process(&options.input_path, &options.output_path, op) {
         eprintln!("{}", err);
         process::exit(1);
     }

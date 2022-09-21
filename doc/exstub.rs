@@ -3,6 +3,8 @@
 extern crate exepack as exepack_crate;
 use exepack_crate::exe;
 
+extern crate lexopt;
+
 use std::env;
 use std::fs::File;
 use std::io::{self, Write};
@@ -28,14 +30,21 @@ fn locate_end_of_stub(stub: &[u8]) -> Option<usize> {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let opts = getopts::Options::new();
-    let matches = opts.parse(env::args().skip(1))?;
-
-    if matches.free.len() != 1 {
+    let mut path: Option<std::path::PathBuf> = None;
+    {
+        use lexopt::prelude::*;
+        let mut parser = lexopt::Parser::from_env();
+        while let Some(arg) = parser.next()? {
+            match arg {
+                Value(val) if path.is_none() => path = Some(val.into()),
+                _ => Err(arg.unexpected())?,
+            }
+        }
+    }
+    let path = path.unwrap_or_else(|| {
         eprintln!("usage: {} INPUT.EXE", env::args().next().unwrap());
         process::exit(1);
-    }
-    let path = &matches.free[0];
+    });
 
     let mut f = File::open(&path)?;
     let exe = exe::Exe::read(&mut f)?;

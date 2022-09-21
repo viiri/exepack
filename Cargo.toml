@@ -4,7 +4,7 @@ version = "1.4.0"
 authors = ["David Fifield <david@bamsoftware.com>"]
 
 [dependencies]
-getopts = "0.2"
+lexopt = "0.2"
 
 [dev-dependencies]
 tempfile = "3"

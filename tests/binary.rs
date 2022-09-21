@@ -141,3 +141,38 @@ fn test_roundtrip() {
     roundtrip_count(0, 9, "hello", "tests/hello.exe");
     roundtrip_count(0, 9, "hello+trailing", "tests/hello+trailing.exe");
 }
+
+#[cfg(unix)]
+fn non_utf8_osstring() -> std::ffi::OsString {
+    use std::os::unix::ffi::OsStrExt;
+    std::ffi::OsStr::from_bytes(b"exepack-non-utf8-\x80-").to_owned()
+}
+
+#[cfg(windows)]
+fn non_utf8_osstring() -> std::ffi::OsString {
+    use std::os::windows::ffi::OsStringExt;
+    let mut s = std::ffi::OsString::from("exepack-non-utf8-");
+    s.push(std::ffi::OsString::from_wide(&[0xd800]));
+    s.push("-");
+    s
+}
+
+/// Tests that the program accepts paths that are not representable as UTF-8.
+#[test]
+fn test_non_utf8_paths() {
+    let mut input_tempfile = tempfile::Builder::new()
+        .prefix(&non_utf8_osstring())
+        .tempfile().unwrap();
+    let output_tempfile = tempfile::Builder::new()
+        .prefix(&non_utf8_osstring())
+        .tempfile().unwrap();
+    // Ensure the paths are not representable as str.
+    assert!(input_tempfile.path().to_str().is_none());
+    assert!(output_tempfile.path().to_str().is_none());
+
+    {
+        let mut f = fs::File::open("tests/hello.exe").unwrap();
+        io::copy(&mut f, &mut input_tempfile).unwrap();
+    }
+    exepack_run(&[] as &[&str; 0], input_tempfile.path(), output_tempfile.path()).unwrap();
+}
