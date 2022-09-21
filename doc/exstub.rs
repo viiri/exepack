@@ -38,7 +38,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = &matches.free[0];
 
     let mut f = File::open(&path)?;
-    let exe = exe::Exe::read(&mut f, None)?;
+    let exe = exe::Exe::read(&mut f)?;
     let stub = &exe.body[usize::from(exe.e_cs)*16 + usize::from(exe.e_ip)..];
     let end = locate_end_of_stub(&stub).ok_or_else(|| "no EXEPACK decompression stub found")?;
     let stub = &stub[..end];
